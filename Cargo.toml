@@ -1,0 +1,9 @@
+[workspace]
+members = ["src/firecracker", "src/jailer"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
