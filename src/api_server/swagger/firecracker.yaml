@@ -5,7 +5,7 @@ info:
                The API is accessible through HTTP calls on specific URLs
                carrying JSON modeled data.
                The transport medium is a Unix Domain Socket.
-  version: 0.20.0
+  version: 0.21.0
   termsOfService: ""
   contact:
     email: "compute-capsule@amazon.com"
@@ -391,6 +391,9 @@ definitions:
       kernel_image_path:
         type: string
         description: Host level path to the kernel image used to boot the guest
+      initrd_path:
+        type: string
+        description: Host level path to the initrd image used to boot the guest
       boot_args:
         type: string
         description: Kernel boot arguments
@@ -449,12 +452,9 @@ definitions:
         description: Enumeration indicating what type of action is contained in the payload
         type: string
         enum:
-        - BlockDeviceRescan
         - FlushMetrics
         - InstanceStart
         - SendCtrlAltDel
-      payload:
-        type: string
 
   InstanceInfo:
     type: object
@@ -508,12 +508,6 @@ definitions:
         type: boolean
         description: Whether or not to include the file path and line number of the log's origin.
         default: false
-      options:
-        type: array
-        items:
-          type: string
-        description: Additional logging options. Only "LogDirtyPages" is supported.
-        default: []
 
   MachineConfiguration:
     type: object

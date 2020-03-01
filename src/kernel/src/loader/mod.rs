@@ -14,8 +14,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::mem;
 
 use super::cmdline::Error as CmdlineError;
-use memory_model::{Address, GuestAddress, GuestMemory};
 use utils::structs::read_struct;
+use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 #[allow(non_camel_case_types)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -74,7 +74,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Returns the entry address of the kernel.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn load_kernel<F>(
-    guest_mem: &GuestMemory,
+    guest_mem: &GuestMemoryMmap,
     kernel_image: &mut F,
     start_address: u64,
 ) -> Result<GuestAddress>
@@ -138,7 +138,7 @@ where
         }
 
         guest_mem
-            .read_to_memory(mem_offset, kernel_image, phdr.p_filesz as usize)
+            .read_from(mem_offset, kernel_image, phdr.p_filesz as usize)
             .map_err(|_| Error::ReadKernelImage)?;
     }
 
@@ -147,7 +147,7 @@ where
 
 #[cfg(target_arch = "aarch64")]
 pub fn load_kernel<F>(
-    guest_mem: &GuestMemory,
+    guest_mem: &GuestMemoryMmap,
     kernel_image: &mut F,
     start_address: u64,
 ) -> Result<GuestAddress>
@@ -217,7 +217,7 @@ where
 
     kernel_load_offset = kernel_load_offset + start_address;
     guest_mem
-        .read_to_memory(
+        .read_from(
             GuestAddress(kernel_load_offset),
             kernel_image,
             kernel_size as usize,
@@ -235,7 +235,7 @@ where
 /// * `guest_addr` - The address in `guest_mem` at which to load the command line.
 /// * `cmdline` - The kernel command line as CString.
 pub fn load_cmdline(
-    guest_mem: &GuestMemory,
+    guest_mem: &GuestMemoryMmap,
     guest_addr: GuestAddress,
     cmdline: &CString,
 ) -> std::result::Result<(), CmdlineError> {
@@ -244,15 +244,16 @@ pub fn load_cmdline(
         return Ok(());
     }
 
-    let end = guest_addr
-        .checked_add(raw_cmdline.len() as u64)
+    let cmdline_last_addr = guest_addr
+        .checked_add(raw_cmdline.len() as u64 - 1)
         .ok_or(CmdlineError::CommandLineOverflow)?; // Extra for null termination.
-    if end > guest_mem.end_addr() {
+
+    if cmdline_last_addr > guest_mem.last_addr() {
         return Err(CmdlineError::CommandLineOverflow);
     }
 
     guest_mem
-        .write_slice_at_addr(raw_cmdline, guest_addr)
+        .write_slice(raw_cmdline, guest_addr)
         .map_err(|_| CmdlineError::CommandLineCopy)?;
 
     Ok(())
@@ -262,13 +263,13 @@ pub fn load_cmdline(
 mod tests {
     use super::super::cmdline::Cmdline;
     use super::*;
-    use memory_model::{GuestAddress, GuestMemory};
     use std::io::Cursor;
+    use vm_memory::{GuestAddress, GuestMemoryMmap};
 
     const MEM_SIZE: usize = 0x18_0000;
 
-    fn create_guest_mem() -> GuestMemory {
-        GuestMemory::new(&[(GuestAddress(0x0), MEM_SIZE)]).unwrap()
+    fn create_guest_mem() -> GuestMemoryMmap {
+        GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), MEM_SIZE)]).unwrap()
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -298,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_load_kernel_no_memory() {
-        let gm = GuestMemory::new(&[(GuestAddress(0x0), 79)]).unwrap();
+        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), 79)]).unwrap();
         let image = make_test_bin();
         assert_eq!(
             Err(Error::ReadKernelImage),
@@ -405,19 +406,19 @@ mod tests {
         cmdline.insert_str("1234").unwrap();
         let cmdline = cmdline.as_cstring().unwrap();
         assert_eq!(Ok(()), load_cmdline(&gm, cmdline_address, &cmdline));
-        let val: u8 = gm.read_obj_from_addr(cmdline_address).unwrap();
+        let val: u8 = gm.read_obj(cmdline_address).unwrap();
         assert_eq!(val, b'1');
         cmdline_address = cmdline_address.unchecked_add(1);
-        let val: u8 = gm.read_obj_from_addr(cmdline_address).unwrap();
+        let val: u8 = gm.read_obj(cmdline_address).unwrap();
         assert_eq!(val, b'2');
         cmdline_address = cmdline_address.unchecked_add(1);
-        let val: u8 = gm.read_obj_from_addr(cmdline_address).unwrap();
+        let val: u8 = gm.read_obj(cmdline_address).unwrap();
         assert_eq!(val, b'3');
         cmdline_address = cmdline_address.unchecked_add(1);
-        let val: u8 = gm.read_obj_from_addr(cmdline_address).unwrap();
+        let val: u8 = gm.read_obj(cmdline_address).unwrap();
         assert_eq!(val, b'4');
         cmdline_address = cmdline_address.unchecked_add(1);
-        let val: u8 = gm.read_obj_from_addr(cmdline_address).unwrap();
+        let val: u8 = gm.read_obj(cmdline_address).unwrap();
         assert_eq!(val, b'\0');
     }
 }

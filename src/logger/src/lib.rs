@@ -135,7 +135,6 @@ extern crate utils;
 pub mod error;
 pub mod metrics;
 
-use std::error::Error;
 use std::io::Write;
 use std::ops::Deref;
 use std::result;
@@ -178,14 +177,6 @@ lazy_static! {
     };
 }
 
-/// Enum representing logging options that can be activated from the API.
-#[repr(usize)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub enum LogOption {
-    /// Enable KVM dirty page tracking and a metric that counts dirty pages.
-    LogDirtyPages = 1,
-}
-
 /// A structure containing info about the App that uses the logger.
 pub struct AppInfo {
     name: String,
@@ -219,7 +210,6 @@ pub struct Logger {
     // Metrics will get flushed here.
     metrics_buf: Mutex<Option<Box<dyn Write + Send>>>,
     instance_id: RwLock<String>,
-    flags: AtomicUsize,
 }
 
 // Auxiliary function to flush a message to a entity implementing `Write` and `Send` traits.
@@ -247,13 +237,7 @@ impl Logger {
             log_buf: Mutex::new(None),
             metrics_buf: Mutex::new(None),
             instance_id: RwLock::new(String::new()),
-            flags: AtomicUsize::new(0),
         }
-    }
-
-    /// Returns the configured flags for the logger.
-    pub fn flags(&self) -> usize {
-        self.flags.load(Ordering::Relaxed)
     }
 
     fn show_level(&self) -> bool {
@@ -266,16 +250,6 @@ impl Logger {
 
     fn show_line_numbers(&self) -> bool {
         self.show_line_numbers.load(Ordering::Relaxed)
-    }
-
-    /// Configure flags for the logger.
-    pub fn set_flags(&self, options: &[LogOption]) -> Result<()> {
-        let mut flags = 0;
-        for option in options.iter() {
-            flags |= option.clone() as usize;
-        }
-        self.flags.store(flags, Ordering::SeqCst);
-        Ok(())
     }
 
     /// Enables or disables including the level in the log message's tag portion.
@@ -513,7 +487,6 @@ impl Logger {
     /// * `instance_id` - Unique string identifying this logger session.
     /// * `log_dest` - Buffer for plain text logs. Needs to implements `Write` and `Send`.
     /// * `metrics_dest` - Buffer for JSON formatted metrics. Needs to implement `Write` and `Send`.
-    /// * `options` - Logger options.
     ///
     /// # Example
     ///
@@ -574,7 +547,8 @@ impl Logger {
                     METRICS.logger.missed_log_count.inc();
                 }
             } else {
-                panic!("Failed to write to the provided metrics destination due to poisoned lock");
+                METRICS.logger.missed_log_count.inc();
+                panic!("Failed to write to the provided log destination due to poisoned lock");
             }
         } else if msg_level <= Level::Warn {
             eprintln!("{}", msg);
@@ -593,19 +567,21 @@ impl Logger {
             match serde_json::to_string(METRICS.deref()) {
                 Ok(msg) => {
                     if let Some(guard) = self.metrics_buf_guard().as_mut() {
-                        write_to_destination(msg, guard)
+                        return write_to_destination(msg, guard)
+                            .map(|()| true)
                             .map_err(|e| {
                                 METRICS.logger.missed_metrics_count.inc();
                                 e
-                            })
-                            .map(|()| true)?;
+                            });
                     } else {
+                        // We have not incremented `missed_metrics_count` as there is no way to push metrics
+                        // if destination lock got poisoned.
                         panic!("Failed to write to the provided metrics destination due to poisoned lock");
                     }
                 }
                 Err(e) => {
                     METRICS.logger.metrics_fails.inc();
-                    return Err(LoggerError::LogMetricFailure(e.description().to_string()));
+                    return Err(LoggerError::LogMetricFailure(e.to_string()));
                 }
             }
         }
@@ -684,7 +660,6 @@ mod tests {
         assert_eq!(l.level.load(Ordering::Relaxed), log::Level::Warn as usize);
         assert_eq!(l.show_line_numbers(), true);
         assert_eq!(l.show_level(), true);
-        assert_eq!(l.flags.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -708,12 +683,6 @@ mod tests {
         assert!(res.is_ok() && !res.unwrap());
 
         l.set_instance_id(TEST_INSTANCE_ID.to_string());
-
-        // Test flag configuration.
-        assert!(l.set_flags(&[]).is_ok());
-        assert_eq!(l.flags(), 0);
-        assert!(l.set_flags(&[LogOption::LogDirtyPages]).is_ok());
-        assert_eq!(l.flags(), LogOption::LogDirtyPages as usize);
 
         // Assert that metrics cannot be flushed to stdout/stderr.
         let res = l.log_metrics();

@@ -16,10 +16,12 @@ mod guest_address;
 mod guest_memory;
 mod mmap;
 
-pub use bytes::ByteValued;
+pub use bytes::{ByteValued, Bytes};
 pub use guest_address::Address;
 pub use guest_address::GuestAddress;
 pub use guest_memory::Error as GuestMemoryError;
 pub use guest_memory::GuestMemory;
+pub use guest_memory::GuestMemoryMmap;
+pub use guest_memory::GuestMemoryRegion;
 pub use guest_memory::MemoryRegion;
 pub use mmap::{Error as MemoryMappingError, MemoryMapping};

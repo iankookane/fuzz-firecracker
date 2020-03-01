@@ -101,9 +101,10 @@ to create new Firecracker releases.
 ## Technical FAQ & Troubleshooting
 
 ### I tried using an initrd for boot but it doesn't seem to be used. Is initrd supported?
-Right now, initrd is not supported in Firecracker. You can track issue
-[#228](https://github.com/firecracker-microvm/firecracker/issues/208) for news on this
-topic.
+
+Initrds are only recently supported in Firecracker. If your release predates
+issue [#228](https://github.com/firecracker-microvm/firecracker/issues/208)
+being resolved, please update.
 
 ### Firecracker is not showing any output on the console.
 
@@ -241,3 +242,10 @@ If the microVM was not configured in terms of memory size through an API request
 the host needs to meet the minimum requirement in terms of free memory size,
 namely 128 MB of free memory which the microVM defaults to.
 
+### Firecracker fails to start and returns "Resource busy" error
+
+If another hypervisor like VMware or VirtualBox is running on the host and locks `/dev/kvm`,
+Firecracker process will fail to start with "Resource busy" error.
+
+This issue can be resolved by terminating the other hypervisor running on the host,
+and allowing Firecracker to start.

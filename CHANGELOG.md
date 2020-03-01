@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased]
+
+## Changed
+- Updated CVE-2019-3016 mitigation information in [Production Host Setup](docs/prod-host-setup.md)
+- In case of using an invalid JSON as a 'config-file' for Firecracker,
+  the process will exit with return code 152.
+
+## [0.21.0]
+
+### Added
+
+- Support for booting with an initial RAM disk image. This image can be
+  specified through the new `initrd_path` field of the `/boot-source` API
+  request.
+
+### Fixed
+
+- Fixed #1469 - Broken GitHub location for Firecracker release binary.
+- The jailer allows changing the default api socket path by using the extra
+  arguments passed to firecracker.
+- Fixed #1456 - Occasional KVM_EXIT_SHUTDOWN and bad syscall (14) during 
+  VM shutdown.
+- Updated the production host setup guide with steps for addressing
+  CVE-2019-18960.
+- The HTTP header parsing is now case insensitive.
+- The `put_api_requests` and `patch_api_requests` metrics for net devices were
+  un-swapped.
+
+### Changed
+  
+- Removed redundant `--seccomp-level` jailer parameter since it can be
+  simply forwarded to the Firecracker executable using "end of command
+  options" convention.
+- Removed `memory.dirty_pages` metric.
+- Removed `options` field from the logger configuration.
+- Decreased release binary size by ~15%.
+- Changed default API socket path to `/run/firecracker.socket`. This path
+  also applies when running with the jailer.
+- Disabled KVM dirty page tracking by default.
+- Removed redundant RescanBlockDevice action from the /actions API.
+  The functionality is available through the PATCH /drives API.
+  See `docs/api_requests/patch-block.md`.
+
 ## [0.20.0]
 
 ### Added

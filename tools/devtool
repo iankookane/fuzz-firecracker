@@ -73,7 +73,7 @@
 # Development container image (name:tag)
 # This should be updated whenever we upgrade the development container.
 # (Yet another step on our way to reproducible builds.)
-DEVCTR_IMAGE="fcuvm/dev:v13"
+DEVCTR_IMAGE="fcuvm/dev:v14"
 
 # Naming things is hard
 MY_NAME="Firecracker $(basename "$0")"
@@ -174,14 +174,17 @@ ok_or_die() {
 # Upon returning from this call, the caller can be certain Docker is available.
 #
 ensure_docker() {
-    which docker > /dev/null 2>&1
+    NEWLINE=$'\n'
+    output=$(which docker 2>&1)
     ok_or_die "Docker not found. Aborting." \
         "Please make sure you have Docker (http://docker.com) installed" \
-        "and properly configured."
+        "and properly configured.${NEWLINE}" \
+        "Error: $?, command output: ${output}"
 
-    docker ps > /dev/null 2>&1
+    output=$(docker ps 2>&1)
     ok_or_die "Error accessing Docker. Please make sure the Docker daemon" \
-        "is running and that you are part of the docker group." \
+        "is running and that you are part of the docker group.${NEWLINE}" \
+        "Error: $?, command output: ${output}${NEWLINE}" \
         "For more information, see" \
         "https://docs.docker.com/install/linux/linux-postinstall/"
 }
@@ -351,8 +354,8 @@ run_devctr() {
     # Use 'z' on the --volume parameter for docker to automatically relabel the
     # content and allow sharing between containers.
     docker run "${docker_args[@]}" \
-        --init \
         --rm \
+        --volume /dev:/dev \
         --volume "$FC_ROOT_DIR:$CTR_FC_ROOT_DIR:z" \
         --env OPT_LOCAL_IMAGES_PATH="$(dirname "$CTR_MICROVM_IMAGES_DIR")" \
         --env PYTHONDONTWRITEBYTECODE=1 \

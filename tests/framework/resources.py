@@ -88,12 +88,15 @@ class BootSource:
     @staticmethod
     def create_json(
             boot_args=None,
-            kernel_image_path=None
+            kernel_image_path=None,
+            initrd_path=None
     ):
         """Compose the json associated to this type of API request."""
         datax = {}
         if kernel_image_path is not None:
             datax['kernel_image_path'] = kernel_image_path
+        if initrd_path is not None:
+            datax['initrd_path'] = initrd_path
         if boot_args is not None:
             datax['boot_args'] = boot_args
         return datax
@@ -204,8 +207,7 @@ class Logger:
             metrics_fifo=None,
             level=None,
             show_level=None,
-            show_log_origin=None,
-            options=None
+            show_log_origin=None
     ):
         """Compose the json associated to this type of API request."""
         datax = {}
@@ -219,8 +221,6 @@ class Logger:
             datax['show_level'] = show_level
         if show_log_origin is not None:
             datax['show_log_origin'] = show_log_origin
-        if options is not None:
-            datax['options'] = options
         return datax
 
 

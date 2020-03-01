@@ -17,13 +17,15 @@ use std::ffi::CStr;
 use std::fmt::Debug;
 
 use self::gic::GICDevice;
-use memory_model::{Address, GuestAddress, GuestMemory};
+use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 /// Errors thrown while configuring aarch64 system.
 #[derive(Debug)]
 pub enum Error {
     /// Failed to create a Flattened Device Tree for this aarch64 microVM.
     SetupFDT(fdt::Error),
+    /// Failed to compute the initrd address.
+    InitrdAddress,
 }
 
 /// The start of the memory area reserved for MMIO devices.
@@ -48,12 +50,15 @@ pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
 /// * `cmdline_cstring` - The kernel commandline.
 /// * `vcpu_mpidr` - Array of MPIDR register values per vcpu.
 /// * `device_info` - A hashmap containing the attached devices for building FDT device nodes.
+/// * `gic_device` - The GIC device.
+/// * `initrd` - Information about an optional initrd.
 pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
-    guest_mem: &GuestMemory,
+    guest_mem: &GuestMemoryMmap,
     cmdline_cstring: &CStr,
     vcpu_mpidr: Vec<u64>,
-    device_info: Option<&HashMap<(DeviceType, String), T>>,
+    device_info: &HashMap<(DeviceType, String), T>,
     gic_device: &Box<dyn GICDevice>,
+    initrd: &Option<super::InitrdConfig>,
 ) -> super::Result<()> {
     fdt::create_fdt(
         guest_mem,
@@ -61,6 +66,7 @@ pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
         cmdline_cstring,
         device_info,
         gic_device,
+        initrd,
     )
     .map_err(Error::SetupFDT)?;
     Ok(())
@@ -71,17 +77,34 @@ pub fn get_kernel_start() -> u64 {
     layout::DRAM_MEM_START
 }
 
+/// Returns the memory address where the initrd could be loaded.
+pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> super::Result<u64> {
+    let round_to_pagesize = |size| (size + (super::PAGE_SIZE - 1)) & !(super::PAGE_SIZE - 1);
+    match GuestAddress(get_fdt_addr(&guest_mem)).checked_sub(round_to_pagesize(initrd_size) as u64)
+    {
+        Some(offset) => {
+            if guest_mem.address_in_range(offset) {
+                return Ok(offset.raw_value());
+            } else {
+                return Err(Error::InitrdAddress);
+            }
+        }
+        None => return Err(Error::InitrdAddress),
+    }
+}
+
 // Auxiliary function to get the address where the device tree blob is loaded.
-fn get_fdt_addr(mem: &GuestMemory) -> u64 {
+fn get_fdt_addr(mem: &GuestMemoryMmap) -> u64 {
     // If the memory allocated is smaller than the size allocated for the FDT,
     // we return the start of the DRAM so that
     // we allow the code to try and load the FDT.
 
-    if let Some(offset) = mem.end_addr().checked_sub(layout::FDT_MAX_SIZE as u64) {
-        if mem.address_in_range(offset) {
-            return offset.raw_value();
+    if let Some(addr) = mem.last_addr().checked_sub(layout::FDT_MAX_SIZE as u64 - 1) {
+        if mem.address_in_range(addr) {
+            return addr.raw_value();
         }
     }
+
     layout::DRAM_MEM_START
 }
 
@@ -108,15 +131,15 @@ mod tests {
     #[test]
     fn test_get_fdt_addr() {
         let regions = arch_memory_regions(layout::FDT_MAX_SIZE - 0x1000);
-        let mem = GuestMemory::new(&regions).expect("Cannot initialize memory");
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
 
         let regions = arch_memory_regions(layout::FDT_MAX_SIZE);
-        let mem = GuestMemory::new(&regions).expect("Cannot initialize memory");
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
 
         let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemory::new(&regions).expect("Cannot initialize memory");
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), 0x1000 + layout::DRAM_MEM_START);
     }
 }

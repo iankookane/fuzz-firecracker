@@ -7,9 +7,10 @@ authors = ["The Chromium OS Authors"]
 kvm-bindings = { version = ">=0.2", features = ["fam-wrappers"] }
 kvm-ioctls = ">=0.4"
 libc = ">=0.2.39"
+utils = { path = "../utils" }
 
 arch_gen = { path = "../arch_gen" }
-memory_model = { path = "../memory_model" }
+vm-memory = { path = "../vm-memory" }
 
 [dev-dependencies]
 utils = { path = "../utils" }

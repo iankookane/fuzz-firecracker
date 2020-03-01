@@ -3,6 +3,7 @@
 
 use serde_json::Value;
 
+use super::VmmData;
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use request::actions::parse_put_actions;
 use request::boot_source::parse_put_boot_source;
@@ -15,7 +16,9 @@ use request::machine_configuration::{
 use request::mmds::{parse_get_mmds, parse_patch_mmds, parse_put_mmds};
 use request::net::{parse_patch_net, parse_put_net};
 use request::vsock::parse_put_vsock;
-use {ApiServer, VmmAction, VmmData};
+use ApiServer;
+
+use vmm::rpc_interface::{VmmAction, VmmActionError};
 
 #[allow(clippy::large_enum_variant)]
 pub enum ParsedRequest {
@@ -71,7 +74,7 @@ impl ParsedRequest {
     }
 
     pub fn convert_to_response(
-        request_outcome: std::result::Result<VmmData, vmm::VmmActionError>,
+        request_outcome: std::result::Result<VmmData, VmmActionError>,
     ) -> Response {
         match request_outcome {
             Ok(vmm_data) => match vmm_data {
@@ -92,7 +95,9 @@ impl ParsedRequest {
                     vmm_action_error
                 );
                 let mut response = Response::new(Version::Http11, StatusCode::BadRequest);
-                response.set_body(Body::new(vmm_action_error.to_string()));
+                response.set_body(Body::new(ApiServer::json_fault_message(
+                    vmm_action_error.to_string(),
+                )));
                 response
             }
         }
@@ -222,8 +227,9 @@ mod tests {
     use std::str::FromStr;
 
     use micro_http::HttpConnection;
+    use vmm::builder::StartMicrovmError;
+    use vmm::rpc_interface::VmmActionError;
     use vmm::vmm_config::machine_config::VmConfig;
-    use vmm::{StartMicrovmError, VmmActionError};
 
     impl PartialEq for ParsedRequest {
         fn eq(&self, other: &ParsedRequest) -> bool {
@@ -465,18 +471,20 @@ mod tests {
         assert_eq!(&buf[..], expected_response.as_bytes());
 
         // Error.
-        let mut buf: [u8; 160] = [0; 160];
-        let response = ParsedRequest::convert_to_response(Err(VmmActionError::from(
-            StartMicrovmError::EventFd,
-        )));
-        assert!(response.write_all(&mut buf.as_mut()).is_ok());
+        let error = VmmActionError::StartMicrovm(StartMicrovmError::MissingKernelConfig);
+        let mut buf: [u8; 193] = [0; 193];
+        let json = ApiServer::json_fault_message(error.to_string());
+        let response = ParsedRequest::convert_to_response(Err(error));
+        response.write_all(&mut buf.as_mut()).unwrap();
+
         let expected_response = format!(
             "HTTP/1.1 400 \r\n\
              Server: Firecracker API\r\n\
              Connection: keep-alive\r\n\
              Content-Type: application/json\r\n\
-             Content-Length: 42\r\n\r\n{}",
-            VmmActionError::from(StartMicrovmError::EventFd).to_string()
+             Content-Length: {}\r\n\r\n{}",
+            json.len(),
+            json,
         );
         assert_eq!(&buf[..], expected_response.as_bytes());
     }
@@ -521,9 +529,8 @@ mod tests {
             .write_all(
                 b"PUT /actions HTTP/1.1\r\n\
                 Content-Type: application/json\r\n\
-                Content-Length: 59\r\n\r\n{ \
-                \"action_type\": \"BlockDeviceRescan\", \
-                \"payload\": \"string\" \
+                Content-Length: 33\r\n\r\n{ \
+                \"action_type\": \"FlushMetrics\" \
                 }",
             )
             .unwrap();
@@ -590,55 +597,20 @@ mod tests {
         let (mut sender, receiver) = UnixStream::pair().unwrap();
         let mut connection = HttpConnection::new(receiver);
 
-        #[cfg(target_arch = "x86_64")]
         let req_as_bytes = b"PUT /logger HTTP/1.1\r\n\
                 Content-Type: application/json\r\n\
-                Content-Length: 149\r\n\r\n{ \
-                \"log_fifo\": \"string\", \
-                \"metrics_fifo\": \"string\", \
-                \"level\": \"Warning\", \
-                \"show_level\": false, \
-                \"show_log_origin\": false, \
-                \"options\": [ \
-                    \"LogDirtyPages\" \
-                ] \
-            }";
-        // `options` field in logger config is only available on x86_64.
-        #[cfg(not(target_arch = "x86_64"))]
-        let req_as_bytes = b"PUT /logger HTTP/1.1\r\n\
-            Content-Type: application/json\r\n\
-            Content-Length: 117\r\n\r\n{ \
-            \"log_fifo\": \"string\", \
-            \"metrics_fifo\": \"string\", \
-            \"level\": \"Warning\", \
-            \"show_level\": false, \
-            \"show_log_origin\": false \
-        }";
-
-        sender.write_all(req_as_bytes).unwrap();
-        assert!(connection.try_read().is_ok());
-        let req = connection.pop_parsed_request().unwrap();
-        assert!(ParsedRequest::try_from_request(&req).is_ok());
-
-        // illegal options will get failed response
-        #[cfg(target_arch = "x86_64")]
-        {
-            let req_as_bytes = b"PUT /logger HTTP/1.1\r\n\
-                Content-Type: application/json\r\n\
-                Content-Length: 137\r\n\r\n{ \
+                Content-Length: 117\r\n\r\n{ \
                 \"log_fifo\": \"string\", \
                 \"metrics_fifo\": \"string\", \
                 \"level\": \"Warning\", \
                 \"show_level\": false, \
                 \"show_log_origin\": false \
-                \"options\": \"foobar\" \
             }";
 
-            sender.write_all(req_as_bytes).unwrap();
-            assert!(connection.try_read().is_ok());
-            let req = connection.pop_parsed_request().unwrap();
-            assert!(ParsedRequest::try_from_request(&req).is_err());
-        }
+        sender.write_all(req_as_bytes).unwrap();
+        assert!(connection.try_read().is_ok());
+        let req = connection.pop_parsed_request().unwrap();
+        assert!(ParsedRequest::try_from_request(&req).is_ok());
     }
 
     #[test]

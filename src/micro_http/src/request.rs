@@ -28,7 +28,7 @@ pub struct Uri {
 
 impl Uri {
     fn new(slice: &str) -> Self {
-        Uri {
+        Self {
             string: String::from(slice),
         }
     }
@@ -39,7 +39,7 @@ impl Uri {
         }
         let utf8_slice =
             from_utf8(bytes).map_err(|_| RequestError::InvalidUri("Cannot parse URI as UTF-8."))?;
-        Ok(Uri::new(utf8_slice))
+        Ok(Self::new(utf8_slice))
     }
 
     /// Returns the absolute path of the `Uri`.
@@ -107,10 +107,15 @@ impl RequestLine {
     }
 
     /// Tries to parse a byte stream in a request line. Fails if the request line is malformed.
+    ///
+    /// # Errors
+    /// `InvalidHttpMethod` is returned if the specified HTTP method is unsupported.
+    /// `InvalidHttpVersion` is returned if the specified HTTP version is unsupported.
+    /// `InvalidUri` is returned if the specified Uri is not valid.
     pub fn try_from(request_line: &[u8]) -> Result<Self, RequestError> {
-        let (method, uri, version) = RequestLine::parse_request_line(request_line);
+        let (method, uri, version) = Self::parse_request_line(request_line);
 
-        Ok(RequestLine {
+        Ok(Self {
             method: Method::try_from(method)?,
             uri: Uri::try_from(uri)?,
             http_version: Version::try_from(version)?,
@@ -126,7 +131,7 @@ impl RequestLine {
 
     #[cfg(test)]
     pub fn new(method: Method, uri: &str, http_version: Version) -> Self {
-        RequestLine {
+        Self {
             method,
             uri: Uri::new(uri),
             http_version,
@@ -189,7 +194,7 @@ impl Request {
         match find(&byte_stream[request_line_end..], &[CR, LF, CR, LF]) {
             // If we have found a CR LF CR LF at the end of the Request Line, the request
             // is complete.
-            Some(0) => Ok(Request {
+            Some(0) => Ok(Self {
                 request_line,
                 headers: Headers::default(),
                 body: None,
@@ -227,7 +232,7 @@ impl Request {
                     }
                 };
 
-                Ok(Request {
+                Ok(Self {
                     request_line,
                     headers,
                     body,
@@ -262,7 +267,7 @@ mod tests {
     use super::*;
 
     impl PartialEq for Request {
-        fn eq(&self, other: &Request) -> bool {
+        fn eq(&self, other: &Self) -> bool {
             // Ignore the other fields of Request for now because they are not used.
             self.request_line == other.request_line
                 && self.headers.content_length() == other.headers.content_length()
@@ -273,45 +278,34 @@ mod tests {
 
     #[test]
     fn test_uri() {
-        let uri = Uri::new("http://localhost/home");
-        assert_eq!(uri.get_abs_path(), "/home");
-
-        let uri = Uri::new("/home");
-        assert_eq!(uri.get_abs_path(), "/home");
-
-        let uri = Uri::new("home");
-        assert_eq!(uri.get_abs_path(), "");
-
-        let uri = Uri::new("http://");
-        assert_eq!(uri.get_abs_path(), "");
-
-        let uri = Uri::new("http://192.168.0.0");
-        assert_eq!(uri.get_abs_path(), "");
+        for tc in &vec![
+            ("http://localhost/home", "/home"),
+            ("http://localhost:8080/home", "/home"),
+            ("http://localhost/home/sub", "/home/sub"),
+            ("/home", "/home"),
+            ("home", ""),
+            ("http://", ""),
+            ("http://192.168.0.0", ""),
+        ] {
+            assert_eq!(Uri::new(tc.0).get_abs_path(), tc.1);
+        }
     }
 
     #[test]
     fn test_find() {
         let bytes: &[u8; 13] = b"abcacrgbabsjl";
-        let i = find(&bytes[..], b"ac");
-        assert_eq!(i.unwrap(), 3);
 
-        let i = find(&bytes[..], b"rgb");
-        assert_eq!(i.unwrap(), 5);
-
-        let i = find(&bytes[..], b"ab");
-        assert_eq!(i.unwrap(), 0);
-
-        let i = find(&bytes[..], b"l");
-        assert_eq!(i.unwrap(), 12);
-
-        let i = find(&bytes[..], b"jle");
-        assert!(i.is_none());
-
-        let i = find(&bytes[..], b"asdkjhasjhdjhgsadg");
-        assert!(i.is_none());
-
-        let i = find(&bytes[..], b"abcacrgbabsjl");
-        assert_eq!(i.unwrap(), 0);
+        for tc in &vec![
+            ("ac", Some(3)),
+            ("rgb", Some(5)),
+            ("ab", Some(0)),
+            ("l", Some(12)),
+            ("abcacrgbabsjl", Some(0)),
+            ("jle", None),
+            ("asdkjhasjhdjhgsadg", None),
+        ] {
+            assert_eq!(find(&bytes[..], tc.0.as_bytes()), tc.1);
+        }
     }
 
     #[test]

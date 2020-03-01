@@ -13,11 +13,12 @@ use std::ptr::null;
 use std::{io, result};
 
 use super::super::DeviceType;
+use super::super::InitrdConfig;
 use super::get_fdt_addr;
 use super::gic::GICDevice;
 use super::layout::FDT_MAX_SIZE;
 use aarch64::fdt::Error::CstringFDTTransform;
-use memory_model::{Address, GuestAddress, GuestMemory, GuestMemoryError};
+use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap};
 
 // This is a value for uniquely identifying the FDT node declaring the interrupt controller.
 const GIC_PHANDLE: u32 = 1;
@@ -75,8 +76,6 @@ pub enum Error {
     CstringFDTTransform(NulError),
     /// Failure in calling syscall for terminating this FDT.
     FinishFDTReserveMap(io::Error),
-    /// FDT was partially written to memory.
-    IncompleteFDTMemoryWrite,
     /// Failure in writing FDT in memory.
     WriteFDTToMemory(GuestMemoryError),
 }
@@ -84,11 +83,12 @@ type Result<T> = result::Result<T, Error>;
 
 /// Creates the flattened device tree for this aarch64 microVM.
 pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
-    guest_mem: &GuestMemory,
+    guest_mem: &GuestMemoryMmap,
     vcpu_mpidr: Vec<u64>,
     cmdline: &CStr,
-    device_info: Option<&HashMap<(DeviceType, String), T>>,
+    device_info: &HashMap<(DeviceType, String), T>,
     gic_device: &Box<dyn GICDevice>,
+    initrd: &Option<InitrdConfig>,
 ) -> Result<(Vec<u8>)> {
     // Alocate stuff necessary for the holding the blob.
     let mut fdt = vec![0; FDT_MAX_SIZE];
@@ -111,12 +111,12 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     append_property_u32(&mut fdt, "interrupt-parent", GIC_PHANDLE)?;
     create_cpu_nodes(&mut fdt, &vcpu_mpidr)?;
     create_memory_node(&mut fdt, guest_mem)?;
-    create_chosen_node(&mut fdt, cmdline)?;
+    create_chosen_node(&mut fdt, cmdline, initrd)?;
     create_gic_node(&mut fdt, gic_device)?;
     create_timer_node(&mut fdt)?;
     create_clock_node(&mut fdt)?;
     create_psci_node(&mut fdt)?;
-    device_info.map_or(Ok(()), |v| create_devices_node(&mut fdt, v))?;
+    create_devices_node(&mut fdt, device_info)?;
 
     // End Header node.
     append_end_node(&mut fdt)?;
@@ -127,12 +127,9 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
 
     // Write FDT to memory.
     let fdt_address = GuestAddress(get_fdt_addr(&guest_mem));
-    let written = guest_mem
-        .write_slice_at_addr(fdt_final.as_slice(), fdt_address)
+    guest_mem
+        .write_slice(fdt_final.as_slice(), fdt_address)
         .map_err(Error::WriteFDTToMemory)?;
-    if written < FDT_MAX_SIZE {
-        return Err(Error::IncompleteFDTMemoryWrite);
-    }
     Ok(fdt_final)
 }
 
@@ -328,8 +325,8 @@ fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &Vec<u64>) -> Result<()> {
     Ok(())
 }
 
-fn create_memory_node(fdt: &mut Vec<u8>, guest_mem: &GuestMemory) -> Result<()> {
-    let mem_size = guest_mem.end_addr().raw_value() - super::layout::DRAM_MEM_START;
+fn create_memory_node(fdt: &mut Vec<u8>, guest_mem: &GuestMemoryMmap) -> Result<()> {
+    let mem_size = guest_mem.last_addr().raw_value() - super::layout::DRAM_MEM_START + 1;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
     let mem_reg_prop = generate_prop64(&[super::layout::DRAM_MEM_START as u64, mem_size as u64]);
@@ -341,9 +338,27 @@ fn create_memory_node(fdt: &mut Vec<u8>, guest_mem: &GuestMemory) -> Result<()> 
     Ok(())
 }
 
-fn create_chosen_node(fdt: &mut Vec<u8>, cmdline: &CStr) -> Result<()> {
+fn create_chosen_node(
+    fdt: &mut Vec<u8>,
+    cmdline: &CStr,
+    initrd: &Option<InitrdConfig>,
+) -> Result<()> {
     append_begin_node(fdt, "chosen")?;
     append_property_cstring(fdt, "bootargs", cmdline)?;
+
+    if let Some(initrd_config) = initrd {
+        append_property_u64(
+            fdt,
+            "linux,initrd-start",
+            initrd_config.address.raw_value() as u64,
+        )?;
+        append_property_u64(
+            fdt,
+            "linux,initrd-end",
+            initrd_config.address.raw_value() + initrd_config.size as u64,
+        )?;
+    }
+
     append_end_node(fdt)?;
 
     Ok(())
@@ -547,7 +562,7 @@ mod tests {
     #[test]
     fn test_create_fdt_with_devices() {
         let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemory::new(&regions).expect("Cannot initialize memory");
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
 
         let dev_info: HashMap<(DeviceType, std::string::String), MMIODeviceInfo> = [
             (
@@ -579,8 +594,9 @@ mod tests {
             &mem,
             vec![0],
             &CString::new("console=tty0").unwrap(),
-            Some(&dev_info),
+            &dev_info,
             &gic,
+            &None,
         )
         .is_ok())
     }
@@ -588,7 +604,7 @@ mod tests {
     #[test]
     fn test_create_fdt() {
         let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemory::new(&regions).expect("Cannot initialize memory");
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         let kvm = Kvm::new().unwrap();
         let vm = kvm.create_vm().unwrap();
         let gic = create_gic(&vm, 1).unwrap();
@@ -596,8 +612,9 @@ mod tests {
             &mem,
             vec![0],
             &CString::new("console=tty0").unwrap(),
-            None::<&std::collections::HashMap<(DeviceType, std::string::String), MMIODeviceInfo>>,
+            &HashMap::<(DeviceType, std::string::String), MMIODeviceInfo>::new(),
             &gic,
+            &None,
         )
         .unwrap();
 
@@ -617,6 +634,56 @@ mod tests {
         */
 
         let bytes = include_bytes!("output.dtb");
+        let pos = 4;
+        let val = layout::FDT_MAX_SIZE;
+        let mut buf = vec![];
+        buf.extend_from_slice(bytes);
+
+        set_size(&mut buf, pos, val);
+        set_size(&mut dtb, pos, val);
+        let original_fdt = device_tree::DeviceTree::load(&buf).unwrap();
+        let generated_fdt = device_tree::DeviceTree::load(&dtb).unwrap();
+        assert!(format!("{:?}", original_fdt) == format!("{:?}", generated_fdt));
+    }
+
+    #[test]
+    fn test_create_fdt_with_initrd() {
+        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
+        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
+        let kvm = Kvm::new().unwrap();
+        let vm = kvm.create_vm().unwrap();
+        let gic = create_gic(&vm, 1).unwrap();
+        let initrd = InitrdConfig {
+            address: GuestAddress(0x10000000),
+            size: 0x1000,
+        };
+
+        let mut dtb = create_fdt(
+            &mem,
+            vec![0],
+            &CString::new("console=tty0").unwrap(),
+            &HashMap::<(DeviceType, std::string::String), MMIODeviceInfo>::new(),
+            &gic,
+            &Some(initrd),
+        )
+        .unwrap();
+
+        /* Use this code when wanting to generate a new DTB sample.
+        {
+            use std::fs;
+            use std::io::Write;
+            use std::path::PathBuf;
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path.join("src/aarch64/output_with_initrd.dtb"))
+                .unwrap();
+            output.write_all(&dtb).unwrap();
+        }
+        */
+
+        let bytes = include_bytes!("output_with_initrd.dtb");
         let pos = 4;
         let val = layout::FDT_MAX_SIZE;
         let mut buf = vec![];

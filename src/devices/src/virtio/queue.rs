@@ -9,18 +9,18 @@ use std::cmp::min;
 use std::num::Wrapping;
 use std::sync::atomic::{fence, Ordering};
 
-use memory_model::{Address, ByteValued, GuestAddress, GuestMemory};
+use vm_memory::{Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 pub(super) const VIRTQ_DESC_F_NEXT: u16 = 0x1;
 pub(super) const VIRTQ_DESC_F_WRITE: u16 = 0x2;
 
-// GuestMemory::read_obj_from_addr() will be used to fetch the descriptor,
+// GuestMemoryMmap::read_obj_from_addr() will be used to fetch the descriptor,
 // which has an explicit constraint that the entire descriptor doesn't
 // cross the page boundary. Otherwise the descriptor may be splitted into
-// two mmap regions which causes failure of GuestMemory::read_obj_from_addr().
+// two mmap regions which causes failure of GuestMemoryMmap::read_obj_from_addr().
 //
 // The Virtio Spec 1.0 defines the alignment of VirtIO descriptor is 16 bytes,
-// which fulfills the explicit constraint of GuestMemory::read_obj_from_addr().
+// which fulfills the explicit constraint of GuestMemoryMmap::read_obj_from_addr().
 
 /// A virtio descriptor constraints with C representive.
 #[repr(C)]
@@ -41,7 +41,7 @@ pub struct DescriptorChain<'a> {
     ttl: u16, // used to prevent infinite chain cycles
 
     /// Reference to guest memory
-    pub mem: &'a GuestMemory,
+    pub mem: &'a GuestMemoryMmap,
 
     /// Index into the descriptor table
     pub index: u16,
@@ -62,7 +62,7 @@ pub struct DescriptorChain<'a> {
 
 impl<'a> DescriptorChain<'a> {
     fn checked_new(
-        mem: &GuestMemory,
+        mem: &GuestMemoryMmap,
         desc_table: GuestAddress,
         queue_size: u16,
         index: u16,
@@ -78,7 +78,7 @@ impl<'a> DescriptorChain<'a> {
         mem.checked_offset(desc_head, 16)?;
 
         // These reads can't fail unless Guest memory is hopelessly broken.
-        let desc = match mem.read_obj_from_addr::<Descriptor>(desc_head) {
+        let desc = match mem.read_obj::<Descriptor>(desc_head) {
             Ok(ret) => ret,
             Err(_) => {
                 // TODO log address
@@ -106,11 +106,7 @@ impl<'a> DescriptorChain<'a> {
     }
 
     fn is_valid(&self) -> bool {
-        !(self
-            .mem
-            .checked_range_offset(self.addr, self.len as usize)
-            .is_none()
-            || (self.has_next() && self.next >= self.queue_size))
+        !self.has_next() || self.next < self.queue_size
     }
 
     /// Gets if this descriptor chain has another descriptor chain linked after it.
@@ -153,7 +149,7 @@ pub struct Queue {
     /// The queue size in elements the driver selected
     pub size: u16,
 
-    /// Inidcates if the queue is finished with configuration
+    /// Indicates if the queue is finished with configuration
     pub ready: bool,
 
     /// Guest physical address of the descriptor table
@@ -194,7 +190,7 @@ impl Queue {
         min(self.size, self.max_size)
     }
 
-    pub fn is_valid(&self, mem: &GuestMemory) -> bool {
+    pub fn is_valid(&self, mem: &GuestMemoryMmap) -> bool {
         let queue_size = u64::from(self.actual_size());
         let desc_table = self.desc_table;
         let desc_table_size = 16 * queue_size;
@@ -254,17 +250,17 @@ impl Queue {
     }
 
     /// Returns the number of yet-to-be-popped descriptor chains in the avail ring.
-    pub fn len(&self, mem: &GuestMemory) -> u16 {
+    pub fn len(&self, mem: &GuestMemoryMmap) -> u16 {
         (self.avail_idx(mem) - self.next_avail).0
     }
 
     /// Checks if the driver has made any descriptor chains available in the avail ring.
-    pub fn is_empty(&self, mem: &GuestMemory) -> bool {
+    pub fn is_empty(&self, mem: &GuestMemoryMmap) -> bool {
         self.len(mem) == 0
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop<'a, 'b>(&'a mut self, mem: &'b GuestMemory) -> Option<DescriptorChain<'b>> {
+    pub fn pop<'a, 'b>(&'a mut self, mem: &'b GuestMemoryMmap) -> Option<DescriptorChain<'b>> {
         if self.len(mem) == 0 {
             return None;
         }
@@ -298,7 +294,7 @@ impl Queue {
         // and virtq rings, so it's safe to unwrap guest memory reads and to use unchecked
         // offsets.
         let desc_index: u16 = mem
-            .read_obj_from_addr(self.avail_ring.unchecked_add(u64::from(index_offset)))
+            .read_obj(self.avail_ring.unchecked_add(u64::from(index_offset)))
             .unwrap();
 
         DescriptorChain::checked_new(mem, self.desc_table, self.actual_size(), desc_index).map(
@@ -316,7 +312,7 @@ impl Queue {
     }
 
     /// Puts an available descriptor head into the used ring for use by the guest.
-    pub fn add_used(&mut self, mem: &GuestMemory, desc_index: u16, len: u32) {
+    pub fn add_used(&mut self, mem: &GuestMemoryMmap, desc_index: u16, len: u32) {
         if desc_index >= self.actual_size() {
             error!(
                 "attempted to add out of bounds descriptor to used ring: {}",
@@ -330,9 +326,8 @@ impl Queue {
         let used_elem = used_ring.unchecked_add(4 + next_used * 8);
 
         // These writes can't fail as we are guaranteed to be within the descriptor ring.
-        mem.write_obj_at_addr(u32::from(desc_index), used_elem)
-            .unwrap();
-        mem.write_obj_at_addr(len as u32, used_elem.unchecked_add(4))
+        mem.write_obj(u32::from(desc_index), used_elem).unwrap();
+        mem.write_obj(len as u32, used_elem.unchecked_add(4))
             .unwrap();
 
         self.next_used += Wrapping(1);
@@ -340,7 +335,7 @@ impl Queue {
         // This fence ensures all descriptor writes are visible before the index update is.
         fence(Ordering::Release);
 
-        mem.write_obj_at_addr(self.next_used.0 as u16, used_ring.unchecked_add(2))
+        mem.write_obj(self.next_used.0 as u16, used_ring.unchecked_add(2))
             .unwrap();
     }
 
@@ -354,40 +349,40 @@ impl Queue {
     /// Fetch the available ring index (`virtq_avail->idx`) from guest memory.
     /// This is written by the driver, to indicate the next slot that will be filled in the avail
     /// ring.
-    fn avail_idx(&self, mem: &GuestMemory) -> Wrapping<u16> {
+    fn avail_idx(&self, mem: &GuestMemoryMmap) -> Wrapping<u16> {
         // Bound checks for queue inner data have already been performed, at device activation time,
         // via `self.is_valid()`, so it's safe to unwrap and use unchecked offsets here.
-        // Note: the `MmioDevice` code ensures that queue addresses cannot be changed by the guest
+        // Note: the `MmioTransport` code ensures that queue addresses cannot be changed by the guest
         //       after device activation, so we can be certain that no change has occured since
         //       the last `self.is_valid()` check.
         let addr = self.avail_ring.unchecked_add(2);
-        Wrapping(mem.read_obj_from_addr::<u16>(addr).unwrap())
+        Wrapping(mem.read_obj::<u16>(addr).unwrap())
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    extern crate memory_model;
+    extern crate vm_memory;
 
     use std::marker::PhantomData;
     use std::mem;
 
     pub use super::*;
-    use memory_model::{GuestAddress, GuestMemory};
+    use vm_memory::{GuestAddress, GuestMemoryMmap};
 
-    // Represents a location in GuestMemory which holds a given type.
+    // Represents a location in GuestMemoryMmap which holds a given type.
     pub struct SomeplaceInMemory<'a, T> {
         pub location: GuestAddress,
-        mem: &'a GuestMemory,
+        mem: &'a GuestMemoryMmap,
         phantom: PhantomData<*const T>,
     }
 
     // The ByteValued trait is required to use mem.read_obj_from_addr and write_obj_at_addr.
     impl<'a, T> SomeplaceInMemory<'a, T>
     where
-        T: memory_model::ByteValued,
+        T: vm_memory::ByteValued,
     {
-        fn new(location: GuestAddress, mem: &'a GuestMemory) -> Self {
+        fn new(location: GuestAddress, mem: &'a GuestMemoryMmap) -> Self {
             SomeplaceInMemory {
                 location,
                 mem,
@@ -397,12 +392,12 @@ pub mod tests {
 
         // Reads from the actual memory location.
         pub fn get(&self) -> T {
-            self.mem.read_obj_from_addr(self.location).unwrap()
+            self.mem.read_obj(self.location).unwrap()
         }
 
         // Writes to the actual memory location.
         pub fn set(&self, val: T) {
-            self.mem.write_obj_at_addr(val, self.location).unwrap()
+            self.mem.write_obj(val, self.location).unwrap()
         }
 
         // This function returns a place in memory which holds a value of type U, and starts
@@ -437,7 +432,7 @@ pub mod tests {
     }
 
     impl<'a> VirtqDesc<'a> {
-        fn new(start: GuestAddress, mem: &'a GuestMemory) -> Self {
+        fn new(start: GuestAddress, mem: &'a GuestMemoryMmap) -> Self {
             assert_eq!(start.0 & 0xf, 0);
 
             let addr = SomeplaceInMemory::new(start, mem);
@@ -480,9 +475,14 @@ pub mod tests {
 
     impl<'a, T> VirtqRing<'a, T>
     where
-        T: memory_model::ByteValued,
+        T: vm_memory::ByteValued,
     {
-        fn new(start: GuestAddress, mem: &'a GuestMemory, qsize: u16, alignment: usize) -> Self {
+        fn new(
+            start: GuestAddress,
+            mem: &'a GuestMemoryMmap,
+            qsize: u16,
+            alignment: usize,
+        ) -> Self {
             assert_eq!(start.0 & (alignment as u64 - 1), 0);
 
             let flags = SomeplaceInMemory::new(start, mem);
@@ -523,7 +523,7 @@ pub mod tests {
         pub len: u32,
     }
 
-    unsafe impl memory_model::ByteValued for VirtqUsedElem {}
+    unsafe impl vm_memory::ByteValued for VirtqUsedElem {}
 
     pub type VirtqAvail<'a> = VirtqRing<'a, u16>;
     pub type VirtqUsed<'a> = VirtqRing<'a, VirtqUsedElem>;
@@ -536,7 +536,7 @@ pub mod tests {
 
     impl<'a> VirtQueue<'a> {
         // We try to make sure things are aligned properly :-s
-        pub fn new(start: GuestAddress, mem: &'a GuestMemory, qsize: u16) -> Self {
+        pub fn new(start: GuestAddress, mem: &'a GuestMemoryMmap, qsize: u16) -> Self {
             // power of 2?
             assert!(qsize > 0 && qsize & (qsize - 1) == 0);
 
@@ -608,8 +608,11 @@ pub mod tests {
 
     #[test]
     fn test_checked_new_descriptor_chain() {
-        let m = &GuestMemory::new(&[(GuestAddress(0), 0x10000), (GuestAddress(0x20000), 0x2000)])
-            .unwrap();
+        let m = &GuestMemoryMmap::from_ranges(&[
+            (GuestAddress(0), 0x10000),
+            (GuestAddress(0x20000), 0x2000),
+        ])
+        .unwrap();
         let vq = VirtQueue::new(GuestAddress(0), m, 16);
 
         assert!(vq.end().0 < 0x1000);
@@ -620,47 +623,26 @@ pub mod tests {
         // desc_table address is way off
         assert!(DescriptorChain::checked_new(m, GuestAddress(0x00ff_ffff_ffff), 16, 0).is_none());
 
-        // the addr field of the descriptor is way off
-        vq.dtable[0].addr.set(0x0fff_ffff_ffff);
-        assert!(DescriptorChain::checked_new(m, vq.dtable_start(), 16, 0).is_none());
-
-        // The following configuration is invalid because the addr + len crosses over the gap
-        // between the two memory regions we configured.
+        // Let's create an invalid chain.
         {
+            // The first desc has a normal len, and the next_descriptor flag is set.
             vq.dtable[0].addr.set(0x1000);
-            vq.dtable[0].len.set(0x20000);
-            assert!(DescriptorChain::checked_new(m, vq.dtable_start(), 16, 0).is_none());
-        }
-
-        // let's create some invalid chains
-
-        {
-            // the addr field of the desc is ok now
-            vq.dtable[0].addr.set(0x1000);
-            // ...but the length is too large
-            vq.dtable[0].len.set(0xffff_ffff);
-            assert!(DescriptorChain::checked_new(m, vq.dtable_start(), 16, 0).is_none());
-        }
-
-        {
-            // the first desc has a normal len now, and the next_descriptor flag is set
             vq.dtable[0].len.set(0x1000);
             vq.dtable[0].flags.set(VIRTQ_DESC_F_NEXT);
-            //..but the the index of the next descriptor is too large
+            // .. but the the index of the next descriptor is too large
             vq.dtable[0].next.set(16);
 
             assert!(DescriptorChain::checked_new(m, vq.dtable_start(), 16, 0).is_none());
         }
 
-        // finally, let's test an ok chain
-
+        // Finally, let's test an ok chain.
         {
             vq.dtable[0].next.set(1);
             vq.dtable[1].set(0x2000, 0x1000, 0, 0);
 
             let c = DescriptorChain::checked_new(m, vq.dtable_start(), 16, 0).unwrap();
 
-            assert_eq!(c.mem as *const GuestMemory, m as *const GuestMemory);
+            assert_eq!(c.mem as *const GuestMemoryMmap, m as *const GuestMemoryMmap);
             assert_eq!(c.desc_table, vq.dtable_start());
             assert_eq!(c.queue_size, 16);
             assert_eq!(c.ttl, c.queue_size);
@@ -676,7 +658,7 @@ pub mod tests {
 
     #[test]
     fn test_queue_validation() {
-        let m = &GuestMemory::new(&[(GuestAddress(0), 0x10000)]).unwrap();
+        let m = &GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let vq = VirtQueue::new(GuestAddress(0), m, 16);
 
         let mut q = vq.create_queue();
@@ -727,7 +709,7 @@ pub mod tests {
 
     #[test]
     fn test_queue_processing() {
-        let m = &GuestMemory::new(&[(GuestAddress(0), 0x10000)]).unwrap();
+        let m = &GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let vq = VirtQueue::new(GuestAddress(0), m, 16);
         let mut q = vq.create_queue();
 
@@ -795,7 +777,7 @@ pub mod tests {
 
     #[test]
     fn test_add_used() {
-        let m = &GuestMemory::new(&[(GuestAddress(0), 0x10000)]).unwrap();
+        let m = &GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let vq = VirtQueue::new(GuestAddress(0), m, 16);
 
         let mut q = vq.create_queue();

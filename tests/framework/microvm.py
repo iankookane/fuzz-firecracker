@@ -13,13 +13,17 @@ destroy microvms.
 import os
 from queue import Queue
 import re
+import select
+import time
 from subprocess import run, PIPE
 
 from retry import retry
+from retry.api import retry_call
 
 import host_tools.memory as mem_tools
 import host_tools.network as net_tools
 
+import framework.utils as utils
 from framework.defs import MICROVM_KERNEL_RELPATH, MICROVM_FSFILES_RELPATH
 from framework.http import Session
 from framework.jailer import JailerContext
@@ -37,23 +41,20 @@ class Microvm:
     process.
     """
 
+    SCREEN_LOGFILE = "/tmp/screen.log"
+
     def __init__(
         self,
         resource_path,
         fc_binary_path,
         jailer_binary_path,
         microvm_id,
-        build_feature='',
         monitor_memory=True,
         bin_cloner_path=None,
-        config_file=None,
-        no_api=False,
     ):
         """Set up microVM attributes, paths, and data structures."""
         # Unique identifier for this machine.
         self._microvm_id = microvm_id
-
-        self.build_feature = build_feature
 
         # Compose the paths to the resources specific to this microvm.
         self._path = os.path.join(resource_path, microvm_id)
@@ -61,6 +62,7 @@ class Microvm:
         self._fsfiles_path = os.path.join(self._path, MICROVM_FSFILES_RELPATH)
         self._kernel_file = ''
         self._rootfs_file = ''
+        self._initrd_file = ''
 
         # The binaries this microvm will use to start.
         self._fc_binary_path = fc_binary_path
@@ -96,13 +98,6 @@ class Microvm:
         self.network = None
         self.machine_cfg = None
         self.vsock = None
-
-        # Optional file that contains a json for configuring microvm from
-        # command line parameter.
-        self.config_file = config_file
-
-        # Parameter set when user wants to disable API thread.
-        self.no_api = no_api
 
         # The ssh config dictionary is populated with information about how
         # to connect to a microVM that has ssh capability. The path of the
@@ -181,6 +176,16 @@ class Microvm:
         self._kernel_file = path
 
     @property
+    def initrd_file(self):
+        """Return the name of the initrd file used by this microVM to boot."""
+        return self._initrd_file
+
+    @initrd_file.setter
+    def initrd_file(self, path):
+        """Set the path to the initrd file."""
+        self._initrd_file = path
+
+    @property
     def rootfs_file(self):
         """Return the path to the image this microVM can boot into."""
         return self._rootfs_file
@@ -242,6 +247,7 @@ class Microvm:
                      ....
                  fsfiles/
                      <fsfile_n>
+                     <initrd_file_n>
                      <ssh_key_n>
                      <other fsfiles>
                      ...
@@ -271,8 +277,7 @@ class Microvm:
         self.network = Network(self._api_socket, self._api_session)
         self.vsock = Vsock(self._api_socket, self._api_session)
 
-        jailer_param_list = self._jailer.construct_param_list(self.config_file,
-                                                              self.no_api)
+        jailer_param_list = self._jailer.construct_param_list()
 
         # When the daemonize flag is on, we want to clone-exec into the
         # jailer rather than executing it via spawning a shell. Going
@@ -288,7 +293,7 @@ class Microvm:
             if self.bin_cloner_path:
                 cmd = [self.bin_cloner_path] + \
                       [self._jailer_binary_path] + \
-                      jailer_param_list
+                    jailer_param_list
                 _p = run(cmd, stdout=PIPE, stderr=PIPE, check=True)
                 # Terrible hack to make the tests fail when starting the
                 # jailer fails with a panic. This is needed because we can't
@@ -314,14 +319,15 @@ class Microvm:
         else:
             # Delete old screen log if any.
             try:
-                os.unlink('/tmp/screen.log')
+                os.unlink(self.SCREEN_LOGFILE)
             except OSError:
                 pass
-            # Log screen output to /tmp/screen.log.
+            # Log screen output to SCREEN_LOGFILE
             # This file will collect any output from 'screen'ed Firecracker.
-            start_cmd = 'screen -L -Logfile /tmp/screen.log '\
+            start_cmd = 'screen -L -Logfile {logfile} '\
                         '-dmS {session} {binary} {params}'
             start_cmd = start_cmd.format(
+                logfile=self.SCREEN_LOGFILE,
                 session=self._session_name,
                 binary=self._jailer_binary_path,
                 params=' '.join(jailer_param_list)
@@ -329,10 +335,24 @@ class Microvm:
 
             run(start_cmd, shell=True, check=True)
 
-            out = run('screen -ls', shell=True, stdout=PIPE)\
-                .stdout.decode('utf-8')
-            screen_pid = re.search(r'([0-9]+)\.{}'.format(self._session_name),
-                                   out).group(1)
+            # Build a regex object to match (number).session_name
+            regex_object = re.compile(
+                r'([0-9]+)\.{}'.format(self._session_name))
+
+            # Run 'screen -ls' in a retry_call loop, 30 times with a one
+            # second delay between calls.
+            # If the output of 'screen -ls' matches the regex object, it will
+            # return the PID. Otherwise a RuntimeError will be raised.
+            screen_pid = retry_call(
+                utils.search_output_from_cmd,
+                fkwargs={
+                    "cmd": 'screen -ls',
+                    "find_regex": regex_object
+                },
+                exceptions=RuntimeError,
+                tries=30,
+                delay=1).group(1)
+
             self.jailer_clone_pid = open('/proc/{0}/task/{0}/children'
                                          .format(screen_pid)
                                          ).read().strip()
@@ -347,7 +367,7 @@ class Microvm:
         # We expect the jailer to start within 80 ms. However, we wait for
         # 1 sec since we are rechecking the existence of the socket 5 times
         # and leave 0.2 delay between them.
-        if not self.no_api:
+        if 'no-api' not in self._jailer.extra_args:
             self._wait_create()
 
     @retry(delay=0.2, tries=5)
@@ -369,6 +389,7 @@ class Microvm:
         mem_size_mib: int = 256,
         add_root_device: bool = True,
         boot_args: str = None,
+        use_initrd: bool = False
     ):
         """Shortcut for quickly configuring a microVM.
 
@@ -395,14 +416,19 @@ class Microvm:
                 self._memory_events_queue
             )
 
-        # Add a kernel to start booting from.
-        response = self.boot.put(
-            kernel_image_path=self.create_jailed_resource(self.kernel_file),
-            boot_args=boot_args
-        )
+        boot_source_args = {
+            'kernel_image_path': self.create_jailed_resource(self.kernel_file),
+            'boot_args': boot_args
+        }
+
+        if use_initrd and self.initrd_file != '':
+            boot_source_args.update(
+                initrd_path=self.create_jailed_resource(self.initrd_file))
+
+        response = self.boot.put(**boot_source_args)
         assert self._api_session.is_status_no_content(response.status_code)
 
-        if add_root_device:
+        if add_root_device and self.rootfs_file != '':
             # Add the root file system with rw permissions.
             response = self.drive.put(
                 drive_id='rootfs',
@@ -468,3 +494,63 @@ class Microvm:
         """
         response = self.actions.put(action_type='InstanceStart')
         assert self._api_session.is_status_no_content(response.status_code)
+
+
+class Serial:
+    """Class for serial console communication with a Microvm."""
+
+    RX_TIMEOUT_S = 5
+
+    def __init__(self, vm):
+        """Initialize a new Serial object."""
+        self._poller = None
+        self._vm = vm
+
+    def open(self):
+        """Open a serial connection."""
+        # Open the screen log file.
+        if self._poller is not None:
+            # serial already opened
+            return
+
+        screen_log_fd = os.open(Microvm.SCREEN_LOGFILE, os.O_RDONLY)
+        self._poller = select.poll()
+        self._poller.register(screen_log_fd,
+                              select.POLLIN | select.POLLHUP)
+
+    def tx(self, input_string, end='\n'):
+        # pylint: disable=invalid-name
+        # No need to have a snake_case naming style for a single word.
+        r"""Send a string terminated by an end token (defaulting to "\n")."""
+        self._vm.serial_input(input_string + end)
+
+    def rx_char(self):
+        """Read a single character."""
+        result = self._poller.poll(0.1)
+
+        for fd, flag in result:
+            if flag & select.POLLHUP:
+                assert False, "Oh! The console vanished before test completed."
+
+            if flag & select.POLLIN:
+                output_char = str(os.read(fd, 1),
+                                  encoding='utf-8',
+                                  errors='ignore')
+                return output_char
+
+        return ''
+
+    def rx(self, token="\n"):
+        # pylint: disable=invalid-name
+        # No need to have a snake_case naming style for a single word.
+        r"""Read a string delimited by an end token (defaults to "\n")."""
+        rx_str = ''
+        start = time.time()
+        while True:
+            rx_str += self.rx_char()
+            if rx_str.endswith(token):
+                break
+            if (time.time() - start) >= self.RX_TIMEOUT_S:
+                assert False
+
+        return rx_str

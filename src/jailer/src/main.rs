@@ -1,8 +1,6 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#[macro_use(crate_version, crate_authors)]
-extern crate clap;
 extern crate libc;
 extern crate regex;
 
@@ -17,22 +15,22 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::result;
 
-use clap::{App, AppSettings, Arg};
-
 use env::Env;
+use utils::arg_parser::{ArgParser, Argument, Error as ParsingError};
 use utils::validators;
 
-const SOCKET_FILE_NAME: &str = "api.socket";
-
+const JAILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug)]
 pub enum Error {
+    ArgumentParsing(ParsingError),
     Canonicalize(PathBuf, io::Error),
     CgroupInheritFromParent(PathBuf, String),
     CgroupLineNotFound(String, String),
     CgroupLineNotUnique(String, String),
-    ChangeFileOwner(io::Error, &'static str),
+    ChangeFileOwner(&'static str, io::Error),
     ChdirNewRoot(io::Error),
     CloseNetNsFd(io::Error),
     CloseDevNullFd(io::Error),
@@ -43,17 +41,17 @@ pub enum Error {
     Exec(io::Error),
     FileName(PathBuf),
     FileOpen(PathBuf, io::Error),
-    FromBytesWithNul(&'static [u8]),
+    FromBytesWithNul(std::ffi::FromBytesWithNulError),
     GetOldFdFlags(io::Error),
     Gid(String),
     InvalidInstanceId(validators::Error),
-    MissingArgument(&'static str),
     MissingParent(PathBuf),
     MkdirOldRoot(io::Error),
     MknodDev(io::Error, &'static str),
     MountBind(io::Error),
     MountPropagationSlave(io::Error),
     NotAFile(PathBuf),
+    NotADirectory(PathBuf),
     NumaNode(String),
     OpenDevNull(io::Error),
     OsStringParsing(PathBuf, OsString),
@@ -62,7 +60,6 @@ pub enum Error {
     ReadToString(PathBuf, io::Error),
     RegEx(regex::Error),
     RmOldRootDir(io::Error),
-    SeccompLevel(std::num::ParseIntError),
     SetCurrentDir(io::Error),
     SetNetNs(io::Error),
     SetSid(io::Error),
@@ -79,6 +76,7 @@ impl fmt::Display for Error {
         use self::Error::*;
 
         match *self {
+            ArgumentParsing(ref err) => write!(f, "Failed to parse arguments: {}", err),
             Canonicalize(ref path, ref io_err) => write!(
                 f,
                 "{}",
@@ -103,7 +101,7 @@ impl fmt::Display for Error {
                 "Found more than one cgroups configuration line in {} for {}",
                 proc_mounts, controller
             ),
-            ChangeFileOwner(ref err, ref filename) => {
+            ChangeFileOwner(ref filename, ref err) => {
                 write!(f, "Failed to change owner for {}: {}", filename, err)
             }
             ChdirNewRoot(ref err) => write!(f, "Failed to chdir into chroot directory: {}", err),
@@ -132,13 +130,12 @@ impl fmt::Display for Error {
                 "{}",
                 format!("Failed to open file {:?}: {}", path, err).replace("\"", "")
             ),
-            FromBytesWithNul(ref bytes) => {
-                write!(f, "Failed to decode string from byte array: {:?}", bytes)
+            FromBytesWithNul(ref err) => {
+                write!(f, "Failed to decode string from byte array: {}", err)
             }
             GetOldFdFlags(ref err) => write!(f, "Failed to get flags from fd: {}", err),
             Gid(ref gid) => write!(f, "Invalid gid: {}", gid),
             InvalidInstanceId(ref err) => write!(f, "Invalid instance ID: {}", err),
-            MissingArgument(ref arg) => write!(f, "Missing argument: {}", arg),
             MissingParent(ref path) => write!(
                 f,
                 "{}",
@@ -165,6 +162,11 @@ impl fmt::Display for Error {
                 "{}",
                 format!("{:?} is not a file", path).replace("\"", "")
             ),
+            NotADirectory(ref path) => write!(
+                f,
+                "{}",
+                format!("{:?} is not a directory", path).replace("\"", "")
+            ),
             NumaNode(ref node) => write!(f, "Invalid numa node: {}", node),
             OpenDevNull(ref err) => write!(f, "Failed to open /dev/null: {}", err),
             OsStringParsing(ref path, _) => write!(
@@ -185,7 +187,6 @@ impl fmt::Display for Error {
             ),
             RegEx(ref err) => write!(f, "Regex failed: {:?}", err),
             RmOldRootDir(ref err) => write!(f, "Failed to remove old jail root directory: {}", err),
-            SeccompLevel(ref err) => write!(f, "Failed to parse seccomp level: {:?}", err),
             SetCurrentDir(ref err) => write!(f, "Failed to change current directory: {}", err),
             SetNetNs(ref err) => write!(f, "Failed to join network namespace: netns: {}", err),
             SetSid(ref err) => write!(f, "Failed to daemonize: setsid: {}", err),
@@ -213,97 +214,59 @@ impl fmt::Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
-    // Initially, the uid and gid params had default values, but it turns out that it's quite
-    // easy to shoot yourself in the foot by not setting proper permissions when preparing the
-    // contents of the jail, so I think their values should be provided explicitly.
-    App::new("jailer")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about("Jail a microVM.")
-        .setting(AppSettings::TrailingVarArg)
+/// Create an ArgParser object which contains info about the command line argument parser and populate
+/// it with the expected arguments and their characteristics.
+pub fn build_arg_parser() -> ArgParser<'static> {
+    ArgParser::new()
         .arg(
-            Arg::with_name("id")
-                .long("id")
-                .help("Jail ID")
+            Argument::new("id")
                 .required(true)
-                .takes_value(true),
+                .takes_value(true)
+                .help("Jail ID."),
         )
         .arg(
-            Arg::with_name("exec_file")
-                .long("exec-file")
-                .help("File path to exec into.")
+            Argument::new("exec-file")
                 .required(true)
-                .takes_value(true),
+                .takes_value(true)
+                .help("File path to exec into."),
         )
         .arg(
-            Arg::with_name("numa_node")
-                .long("node")
-                .help("NUMA node to assign this microVM to.")
+            Argument::new("node")
                 .required(true)
-                .takes_value(true),
+                .takes_value(true)
+                .help("NUMA node to assign this microVM to."),
         )
         .arg(
-            Arg::with_name("uid")
-                .long("uid")
-                .help("The user identifier the jailer switches to after exec.")
+            Argument::new("uid")
                 .required(true)
-                .takes_value(true),
+                .takes_value(true)
+                .help("The user identifier the jailer switches to after exec."),
         )
         .arg(
-            Arg::with_name("gid")
-                .long("gid")
-                .help("The group identifier the jailer switches to after exec.")
+            Argument::new("gid")
                 .required(true)
-                .takes_value(true),
+                .takes_value(true)
+                .help("The group identifier the jailer switches to after exec."),
         )
         .arg(
-            Arg::with_name("chroot_base")
-                .long("chroot-base-dir")
-                .help("The base folder where chroot jails are located.")
-                .required(false)
+            Argument::new("chroot-base-dir")
+                .takes_value(true)
                 .default_value("/srv/jailer")
-                .takes_value(true),
+                .help("The base folder where chroot jails are located."),
         )
         .arg(
-            Arg::with_name("netns")
-                .long("netns")
-                .help("Path to the network namespace this microVM should join.")
-                .required(false)
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("daemonize")
-                .long("daemonize")
-                .help(
-                    "Daemonize the jailer before exec, by invoking setsid(), and redirecting \
-                     the standard I/O file descriptors to /dev/null.",
-                )
-                .required(false)
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("seccomp-level")
-                .long("seccomp-level")
-                .help(
-                    "Level of seccomp filtering that will be passed to executed path as \
-                argument.\n
-    - Level 0: No filtering.\n
-    - Level 1: Seccomp filtering by syscall number.\n
-    - Level 2: Seccomp filtering by syscall number and argument values.\n
-",
-                )
-                .required(false)
+            Argument::new("netns")
                 .takes_value(true)
-                .default_value("2")
-                .possible_values(&["0", "1", "2"]),
+                .help("Path to the network namespace this microVM should join."),
         )
+        .arg(Argument::new("daemonize").takes_value(false).help(
+            "Daemonize the jailer before exec, by invoking setsid(), and redirecting \
+             the standard I/O file descriptors to /dev/null.",
+        ))
         .arg(
-            Arg::with_name("extra-args")
-                .help("Arguments that will be passed verbatim to the exec file.")
-                .required(false)
+            Argument::new("extra-args")
                 .takes_value(true)
-                .multiple(true),
+                .help("Arguments that will be passed verbatim to the exec file."),
         )
 }
 
@@ -344,15 +307,37 @@ fn to_cstring<T: AsRef<Path>>(path: T) -> Result<CString> {
 fn main() {
     sanitize_process();
 
+    let mut arg_parser = build_arg_parser();
+
+    match arg_parser.parse_from_cmdline() {
+        Err(err) => {
+            println!(
+                "Arguments parsing error: {} \n\n\
+                 For more information try --help.",
+                err
+            );
+            process::exit(1);
+        }
+        _ => {
+            if let Some(help) = arg_parser.arguments().value_as_bool("help") {
+                if help {
+                    println!("Jailer v{}\n", JAILER_VERSION);
+                    println!("{}", arg_parser.formatted_help());
+                    process::exit(0);
+                }
+            }
+        }
+    }
+
     Env::new(
-        clap_app().get_matches(),
+        arg_parser.arguments(),
         utils::time::get_time(utils::time::ClockType::Monotonic) / 1000,
         utils::time::get_time(utils::time::ClockType::ProcessCpu) / 1000,
     )
     .and_then(|env| {
         fs::create_dir_all(env.chroot_dir())
             .map_err(|e| Error::CreateDir(env.chroot_dir().to_owned(), e))?;
-        env.run(SOCKET_FILE_NAME)
+        env.run()
     })
     .unwrap_or_else(|err| panic!("Jailer error: {}", err));
 }
@@ -362,6 +347,8 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
+
+    use utils::arg_parser;
 
     #[test]
     fn test_sanitize_process() {
@@ -390,16 +377,22 @@ mod tests {
     #[allow(clippy::cognitive_complexity)]
     #[test]
     fn test_error_display() {
+        use std::ffi::CStr;
+
         let path = PathBuf::from("/foo");
         let file_str = "/foo/bar";
         let file_path = PathBuf::from(file_str);
         let proc_mounts = "/proc/mounts";
         let controller = "sysfs";
         let id = "foobar";
+        let err_args_parse = arg_parser::Error::UnexpectedArgument("foo".to_string());
         let err_regex = regex::Error::Syntax(id.to_string());
-        let err_parse = i8::from_str_radix("129", 10).unwrap_err();
         let err2_str = "No such file or directory (os error 2)";
 
+        assert_eq!(
+            format!("{}", Error::ArgumentParsing(err_args_parse)),
+            "Failed to parse arguments: Found argument 'foo' which wasn't expected, or isn't valid in this context."
+        );
         assert_eq!(
             format!(
                 "{}",
@@ -428,10 +421,15 @@ mod tests {
             ),
             "Found more than one cgroups configuration line in /proc/mounts for sysfs",
         );
+
+        let folder_cstr = CStr::from_bytes_with_nul(b"/dev/net/tun\0").unwrap();
         assert_eq!(
             format!(
                 "{}",
-                Error::ChangeFileOwner(io::Error::from_raw_os_error(42), "/dev/net/tun")
+                Error::ChangeFileOwner(
+                    folder_cstr.to_str().unwrap(),
+                    io::Error::from_raw_os_error(42)
+                )
             ),
             "Failed to change owner for /dev/net/tun: No message of desired type (os error 42)",
         );
@@ -494,9 +492,11 @@ mod tests {
             ),
             format!("Failed to open file /foo/bar: {}", err2_str)
         );
+
+        let err = CStr::from_bytes_with_nul(b"/dev").err().unwrap();
         assert_eq!(
-            format!("{}", Error::FromBytesWithNul(b"/\0")),
-            "Failed to decode string from byte array: [47, 0]",
+            format!("{}", Error::FromBytesWithNul(err)),
+            "Failed to decode string from byte array: data provided is not nul terminated",
         );
         assert_eq!(
             format!("{}", Error::GetOldFdFlags(io::Error::from_raw_os_error(42))),
@@ -512,10 +512,6 @@ mod tests {
                 Error::InvalidInstanceId(validators::Error::InvalidChar('a', 1))
             ),
             "Invalid instance ID: invalid char (a) at position 1",
-        );
-        assert_eq!(
-            format!("{}", Error::MissingArgument(id)),
-            "Missing argument: foobar",
         );
         assert_eq!(
             format!("{}", Error::MissingParent(file_path.clone())),
@@ -545,6 +541,10 @@ mod tests {
         assert_eq!(
             format!("{}", Error::NotAFile(file_path.clone())),
             "/foo/bar is not a file",
+        );
+        assert_eq!(
+            format!("{}", Error::NotADirectory(file_path.clone())),
+            "/foo/bar is not a directory",
         );
         assert_eq!(
             format!("{}", Error::NumaNode(id.to_string())),
@@ -586,10 +586,6 @@ mod tests {
         assert_eq!(
             format!("{}", Error::RmOldRootDir(io::Error::from_raw_os_error(42))),
             "Failed to remove old jail root directory: No message of desired type (os error 42)",
-        );
-        assert_eq!(
-            format!("{}", Error::SeccompLevel(err_parse.clone())),
-            "Failed to parse seccomp level: ParseIntError { kind: Overflow }",
         );
         assert_eq!(
             format!("{}", Error::SetCurrentDir(io::Error::from_raw_os_error(2))),
