@@ -14,7 +14,7 @@ fn create_block() -> Block {
     Block::new(mem, block_file, true, rate_limiter).unwraper();
 }
 
-fuzz_block!(|data: u64| {
+fuzz_target!(|data: u64| {
     let test_string = "hello";
     let test_block = create_block();
     println!("{:?}", test_block);
