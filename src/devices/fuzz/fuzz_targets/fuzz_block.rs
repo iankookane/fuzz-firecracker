@@ -106,14 +106,14 @@ fuzz_target!(|data| {
     let status_addr = GuestAddress(vq.dtable[2].addr.get());
 
     block.set_device_activated(true);
-
+    // println!("debug {:?}", (data));
 
     mem.write_obj::<u32>(VIRTIO_BLK_T_OUT, request_type_addr)
         .unwrap();
     // Make data read only, 8 bytes in len, and set the actual value to be written.
     vq.dtable[1].flags.set(VIRTQ_DESC_F_NEXT);
     vq.dtable[1].len.set(data.len() as u32);
-    mem.write_slice(&data[32..], data_addr).unwrap();
+    mem.write_slice(&data, data_addr).unwrap();
 
     check_metric_after_block!(
         &METRICS.block.write_count,
