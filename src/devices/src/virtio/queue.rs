@@ -360,7 +360,7 @@ impl Queue {
     }
 }
 
-#[cfg(test)]
+// #[cfg(test)]
 pub mod tests {
     extern crate vm_memory;
 

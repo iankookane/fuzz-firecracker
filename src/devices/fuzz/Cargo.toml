@@ -12,8 +12,15 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = { version = "0.3", features = ["arbitrary-derive"] }
 
-[dependencies.devices]
-path = ".."
+dumbo = { path = "../../dumbo" }
+logger = { path = "../../logger" }
+vm-memory = { path = "../../vm-memory" }
+polly = { path = "../../polly" }
+utils = { path = "../../utils" }
+net_gen = { path = "../../net_gen" }
+rate_limiter = { path = "../../rate_limiter" }
+virtio_gen = { path = "../../virtio_gen" }
+devices = { path = "../"}
 
 # Prevent this from interfering with workspaces
 [workspace]
