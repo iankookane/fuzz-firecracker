@@ -11,7 +11,12 @@ use devices::virtio::queue::tests::VirtQueue;
 use polly::epoll::{EpollEvent, EventSet};
 use polly::event_manager::{EventManager, Subscriber};
 use logger::{Metric, METRICS};
-use utils::eventfd::EventFd;
+// // use utils::eventfd::EventFd;
+// extern crate vmm_sys_util;
+// use vmm_sys_util::eventfd::EventFd;
+// pub use vmm_sys_util::{errno, eventfd, ioctl, tempdir, tempfile, terminal};
+use std::os::unix::io::AsRawFd;
+
 const VIRTQ_DESC_F_NEXT: u16 = 0x1;
 const VIRTQ_DESC_F_WRITE: u16 = 0x2;
 const VIRTIO_BLK_S_OK: u32 = 0;
@@ -75,7 +80,7 @@ fn invoke_handler_for_queue_event(b: &mut Block) {
     assert_eq!(b.interrupt_evt.read().unwrap(), 1);
 }
 
-fuzz_target!(|data: u64| {
+fuzz_target!(|data| {
     /// Will read $metric, run the code in $block, then assert metric has increased by $delta.
     macro_rules! check_metric_after_block {
         ($metric:expr, $delta:expr, $block:expr) => {{
@@ -107,8 +112,8 @@ fuzz_target!(|data: u64| {
         .unwrap();
     // Make data read only, 8 bytes in len, and set the actual value to be written.
     vq.dtable[1].flags.set(VIRTQ_DESC_F_NEXT);
-    vq.dtable[1].len.set(8);
-    mem.write_obj::<u64>(123_456_789, data_addr).unwrap();
+    vq.dtable[1].len.set(data.len());
+    mem.write_obj::<u64>(&data[32..], data_addr).unwrap();
 
     check_metric_after_block!(
         &METRICS.block.write_count,
@@ -122,6 +127,6 @@ fuzz_target!(|data: u64| {
     assert_eq!(mem.read_obj::<u32>(status_addr).unwrap(), VIRTIO_BLK_S_OK);
 
 
-    // println!("{:?}", "test");
+    println!("{:?}", (mem.read_obj::<u32>(data_addr).unwrap()));
     let _ = devices::virtio::block::build_config_space(data);
 });

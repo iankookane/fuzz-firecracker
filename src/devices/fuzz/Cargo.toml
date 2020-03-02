@@ -11,6 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = { version = "0.3", features = ["arbitrary-derive"] }
+vmm-sys-util = ">=0.2.1"
 
 dumbo = { path = "../../dumbo" }
 logger = { path = "../../logger" }

@@ -67,6 +67,7 @@ dependencies = [
  "utils",
  "virtio_gen",
  "vm-memory",
+ "vmm-sys-util",
 ]
 
 [[package]]
