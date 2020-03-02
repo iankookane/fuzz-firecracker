@@ -22,3 +22,7 @@ members = ["."]
 [[bin]]
 name = "fuzz_block"
 path = "fuzz_targets/fuzz_block.rs"
+
+[[bin]]
+name = "fuzz_vsock"
+path = "fuzz_targets/vsock.rs"

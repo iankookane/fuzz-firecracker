@@ -6,7 +6,7 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 // pub u64
 
 extern crate devices;
-fuzz_target!(|data: &[u8]| {
+fuzz_vsock!(|data: &[u8]| {
     // fuzzed code goes here
     //let _ = devices::virtio::block::build_config_space(data);
     let test = u64::new(data);
