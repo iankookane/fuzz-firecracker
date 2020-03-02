@@ -112,8 +112,8 @@ fuzz_target!(|data| {
         .unwrap();
     // Make data read only, 8 bytes in len, and set the actual value to be written.
     vq.dtable[1].flags.set(VIRTQ_DESC_F_NEXT);
-    vq.dtable[1].len.set(data.len());
-    mem.write_obj::<u64>(&data[32..], data_addr).unwrap();
+    vq.dtable[1].len.set(data.len() as u32);
+    mem.write_slice(&data[32..], data_addr).unwrap();
 
     check_metric_after_block!(
         &METRICS.block.write_count,
@@ -126,7 +126,9 @@ fuzz_target!(|data| {
     assert_eq!(vq.used.ring[0].get().len, 0);
     assert_eq!(mem.read_obj::<u32>(status_addr).unwrap(), VIRTIO_BLK_S_OK);
 
+    let buf = &mut [0u8; 32];
+    mem.read_slice(buf, data_addr).unwrap();
 
-    println!("{:?}", (mem.read_obj::<u32>(data_addr).unwrap()));
-    let _ = devices::virtio::block::build_config_space(data);
+    println!("{:?}", (buf));
+    // let _ = devices::virtio::block::build_config_space(data);
 });
