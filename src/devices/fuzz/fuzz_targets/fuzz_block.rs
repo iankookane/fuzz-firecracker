@@ -11,11 +11,13 @@ use devices::virtio::queue::tests::VirtQueue;
 use polly::epoll::{EpollEvent, EventSet};
 use polly::event_manager::{EventManager, Subscriber};
 use logger::{Metric, METRICS};
-// // use utils::eventfd::EventFd;
-// extern crate vmm_sys_util;
-// use vmm_sys_util::eventfd::EventFd;
-// pub use vmm_sys_util::{errno, eventfd, ioctl, tempdir, tempfile, terminal};
 use std::os::unix::io::AsRawFd;
+
+// EACH DEVICE HAS x QUEUES that have y RINGS which have descriptors to buffers (like avail pointing data desc which points to a buffer)
+// For example network has send and receive queue.
+// virtio ring has 3 rings, 1 is descriptor table ,1 is avail ring, 2 is used ring
+// block has 1 queue for requests.
+// 1st 16 bytes of each buffer in the queue (where avail pointing to) is the request type descriptor
 
 const VIRTQ_DESC_F_NEXT: u16 = 0x1;
 const VIRTQ_DESC_F_WRITE: u16 = 0x2;
@@ -28,10 +30,14 @@ fn create_block() -> Block {
     block_file.set_len(0x1000).unwrap();
     let rate_limiter = RateLimiter::new(0, None, 0, 100_000, None, 10).unwrap();
 
-    let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
+    let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x3010)]).unwrap();
     Block::new(mem, block_file, true, rate_limiter).unwrap()
 }
 
+/**
+ * This just intializes the virtqueue.
+ * https://t1.daumcdn.net/cfile/tistory/2575054258B557F21F
+ */
 fn initialize_virtqueue(vq: &VirtQueue) {
     let request_type_desc: usize = 0;
     let data_desc: usize = 1;
@@ -42,8 +48,11 @@ fn initialize_virtqueue(vq: &VirtQueue) {
     let status_addr: u64 = 0x3000;
     let len = 0x1000;
 
+    // dtable is the descripto table which refers to the buffers the device is using., buffers can be chained via next.
+
     // Set the request type descriptor.
-    vq.avail.ring[request_type_desc].set(request_type_desc as u16);
+    vq.avail.ring[request_type_desc].set(request_type_desc as u16); // vq.avail is the available ring, vq.avail.ring is a list of available buffers
+    // create a descriptor 0 and set it to be 0x1000 long and flag of NEXT, pointing to 1
     vq.dtable[request_type_desc].set(request_addr, len, VIRTQ_DESC_F_NEXT, data_desc as u16);
 
     // Set the data descriptor.
@@ -51,7 +60,7 @@ fn initialize_virtqueue(vq: &VirtQueue) {
     vq.dtable[data_desc].set(
         data_addr,
         len,
-        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE, // make this buffer writable
         status_desc as u16,
     );
 
@@ -90,22 +99,19 @@ fuzz_target!(|data| {
         }};
     }
 
-
-    // TODO: make necessary attributes public https://github.com/rust-fuzz/cargo-fuzz/issues/156
+    // Made necessary attributes public https://github.com/rust-fuzz/cargo-fuzz/issues/156
     // Note that crosvm has block.activate which allows you to pass queues and events so this wouldn't be needed
     // Later can try attaching a block device see src/vmm/builder.rs
-    let mut block = create_block();
-    let mem = block.mem.clone();
-    let vq = VirtQueue::new(GuestAddress(0), &mem, 16);
-    block.queues[0] = vq.create_queue();
+    let mut block = create_block(); // create a block from memory 0x10000 length
+    let mem = block.mem.clone(); // get a pointer to block.mem (Guest memory)
+    let vq = VirtQueue::new(GuestAddress(0), &mem, 16); // A Test helper builder to create a virtio queue with 16 descriptors
+    block.queues[0] = vq.create_queue(); // set the block's queue
     block.set_device_activated(true);
     initialize_virtqueue(&vq);
 
     let request_type_addr = GuestAddress(vq.dtable[0].addr.get());
     let data_addr = GuestAddress(vq.dtable[1].addr.get());
     let status_addr = GuestAddress(vq.dtable[2].addr.get());
-
-    block.set_device_activated(true);
     // println!("debug {:?}", (data));
 
     mem.write_obj::<u32>(VIRTIO_BLK_T_OUT, request_type_addr)
@@ -129,6 +135,6 @@ fuzz_target!(|data| {
     let buf = &mut [0u8; 32];
     mem.read_slice(buf, data_addr).unwrap();
 
-    println!("{:?}", (buf));
+    // println!("{:?}", (buf));
     // let _ = devices::virtio::block::build_config_space(data);
 });
