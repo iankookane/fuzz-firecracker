@@ -56,6 +56,11 @@ fn initialize_virtqueue(vq: &VirtQueue) {
     vq.dtable[request_type_desc].set(request_addr, len, VIRTQ_DESC_F_NEXT, data_desc as u16);
 
     // Set the data descriptor.
+    /**
+     * In this
+        example the buffer we’re reading into is physically contiguous: if it wasn’t, we’d use multiple descriptor table entries.
+        https://www.ozlabs.org/~rusty/virtio-spec/virtio-paper.pdf
+     */
     vq.avail.ring[data_desc].set(data_desc as u16);
     vq.dtable[data_desc].set(
         data_addr,
