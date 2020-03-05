@@ -23,6 +23,8 @@ rate_limiter = { path = "../../rate_limiter" }
 virtio_gen = { path = "../../virtio_gen" }
 devices = { path = "../"}
 
+libc = ">=0.2.39"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]

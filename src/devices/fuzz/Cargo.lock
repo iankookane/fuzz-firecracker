@@ -59,6 +59,7 @@ version = "0.0.0"
 dependencies = [
  "devices",
  "dumbo",
+ "libc",
  "libfuzzer-sys",
  "logger",
  "net_gen",

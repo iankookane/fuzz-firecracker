@@ -5,11 +5,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-mod csm;
-mod device;
-mod event_handler;
-mod packet;
-mod unix;
+pub mod csm;
+pub mod device;
+pub mod event_handler;
+pub mod packet;
+pub mod unix;
 
 use std::os::unix::io::AsRawFd;
 
@@ -22,7 +22,7 @@ use vm_memory::GuestMemoryError;
 
 use packet::VsockPacket;
 
-mod defs {
+pub mod defs {
     /// Number of virtio queues.
     pub const NUM_QUEUES: usize = 3;
     /// Virtio queue sizes, in number of descriptor chain heads.
@@ -109,7 +109,7 @@ pub enum VsockError {
     EventFd(std::io::Error),
 }
 
-type Result<T> = std::result::Result<T, VsockError>;
+pub type Result<T> = std::result::Result<T, VsockError>;
 
 /// A passive, event-driven object, that needs to be notified whenever an epoll-able event occurs.
 /// An event-polling control loop will use `as_raw_fd()` and `get_polled_evset()` to query
@@ -149,7 +149,7 @@ pub trait VsockChannel {
 /// translates guest-side vsock connections to host-side Unix domain socket connections.
 pub trait VsockBackend: VsockChannel + VsockEpollListener + Send {}
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests {
     use super::device::{Vsock, RXQ_INDEX, TXQ_INDEX};
     use super::packet::VSOCK_PKT_HDR_SIZE;
