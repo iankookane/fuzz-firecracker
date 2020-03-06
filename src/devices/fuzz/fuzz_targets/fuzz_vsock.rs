@@ -43,7 +43,7 @@ fuzz_target!(|fuzzer_data: &[u8]| {
     // which is used to make mutex.pkt. Which is the same as pkt
     // except it grabs the queue (created on line 2 comment)
     // from the vsock(device) with testbackend.
-    // 
+    // TODO: overflow memory
     let mut ctx = MuxerTestContext::new("peer_connection2");
 
      // Test peer connection refused.
