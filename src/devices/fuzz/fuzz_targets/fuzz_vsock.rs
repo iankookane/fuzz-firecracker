@@ -35,7 +35,15 @@ fuzz_target!(|fuzzer_data: &[u8]| {
     const LOCAL_CID: u64 = 2;
     const PEER_CID: u64 = 3;
 
-    // Check comments on MuxerTestContext
+    // creates a real muxer (ctx) with a VsockTestContext (vsock/mod.rs)
+    // which creates a 3 queues for guest virtio vsock and create a
+    // creates a device (vsock<TestBackend>) which has virtual queues as well.
+    // Both are used to create the event handler context,
+    // which is used to make mutex.pkt.
+    //
+    // TODO: compare how eventhandlercontext compares to pkt
+    // TODO: compare how testBackend compares to regular backend.
+    // 
     let mut ctx = MuxerTestContext::new("peer_connection2");
 
      // Test peer connection refused.
