@@ -29,13 +29,14 @@ use std::ops::Drop;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-fuzz_target!(|data: &[u8]| {
+fuzz_target!(|fuzzer_data: &[u8]| {
     const LOCAL_PORT: u32 = 1026;
     const PEER_PORT: u32 = 1025;
     const LOCAL_CID: u64 = 2;
     const PEER_CID: u64 = 3;
 
-    let mut ctx = MuxerTestContext::new("peer_connection");
+    // Check comments on MuxerTestContext
+    let mut ctx = MuxerTestContext::new("peer_connection2");
 
      // Test peer connection refused.
      ctx.init_pkt(LOCAL_PORT, PEER_PORT, uapi::VSOCK_OP_REQUEST);
@@ -68,12 +69,13 @@ fuzz_target!(|data: &[u8]| {
      assert!(ctx.muxer.conn_map.contains_key(&key));
 
      // Test guest -> host data flow.
-     let data = [1, 2, 3, 4];
+     let data = fuzzer_data;
      ctx.init_data_pkt(LOCAL_PORT, PEER_PORT, &data);
      ctx.send();
      let mut buf = vec![0; data.len()];
      stream.read_exact(buf.as_mut_slice()).unwrap();
      assert_eq!(buf.as_slice(), data);
+    //  println!("{:?}", buf.as_slice());
 
      // Test host -> guest data flow.
      let data = [5u8, 6, 7, 8];

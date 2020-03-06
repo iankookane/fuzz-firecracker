@@ -304,6 +304,7 @@ impl VsockMuxer {
     pub fn new(cid: u64, host_sock_path: String) -> Result<Self> {
         // Open/bind on the host Unix socket, so we can accept host-initiated
         // connections.
+        
         let host_sock = UnixListener::bind(&host_sock_path)
             .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
             .map_err(Error::UnixBind)?;
@@ -780,6 +781,7 @@ pub mod tests {
 
     impl MuxerTestContext {
         pub fn new(name: &str) -> Self {
+            // Check comments on VsockTestContext (Test Context in vsock/mod.rs)
             let vsock_test_ctx = VsockTestContext::new();
             let mut handler_ctx = vsock_test_ctx.create_event_handler_context();
             let pkt = VsockPacket::from_rx_virtq_head(

@@ -255,11 +255,13 @@ mod tests {
         pub fn new() -> Self {
             const CID: u64 = 52;
             const MEM_SIZE: usize = 1024 * 1024 * 128;
+            // Allocate 128MB
             let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), MEM_SIZE)]).unwrap();
             Self {
                 cid: CID,
                 mem: mem.clone(),
                 mem_size: MEM_SIZE,
+                // Create a virtio device (vsock) with a test backend.
                 device: Vsock::new(CID, mem, TestBackend::new()).unwrap(),
             }
         }
