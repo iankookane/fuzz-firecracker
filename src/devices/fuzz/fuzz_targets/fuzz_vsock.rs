@@ -38,7 +38,7 @@ fuzz_target!(|fuzzer_data: &[u8]| {
     // creates a real muxer (ctx) with a VsockTestContext (vsock/mod.rs)
     // which creates a 3 queues for guest virtio vsock and create a
     // creates a device (vsock<TestBackend>) which has virtual queues as well.
-    // Testbackend seems to still use the send and recvpacket of the real code.
+    // Testbackend seems to still use the send and recvpacket of the real code. (while the mock wants dont execute)
     // Both are used to create the event handler context,
     // which is used to make mutex.pkt. Which is the same as pkt
     // except it grabs the queue (created on line 2 comment)
