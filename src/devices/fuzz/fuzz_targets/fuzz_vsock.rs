@@ -44,6 +44,7 @@ fuzz_target!(|fuzzer_data: &[u8]| {
     // except it grabs the queue (created on line 2 comment)
     // from the vsock(device) with testbackend.
     // TODO: overflow memory
+    // TODO: fuzz GuestQ
     let mut ctx = MuxerTestContext::new("peer_connection2");
 
      // Test peer connection refused.
@@ -83,7 +84,13 @@ fuzz_target!(|fuzzer_data: &[u8]| {
      let mut buf = vec![0; data.len()];
      stream.read_exact(buf.as_mut_slice()).unwrap();
      assert_eq!(buf.as_slice(), data);
-    //  println!("{:?}", buf.as_slice());
+     if (data.len() > 4096) {
+        println!("{:?}", data.len());
+     }
+
+     if (data.len() > 0x10000) {
+        println!("{:?}", data.len());
+     }
 
      // Test host -> guest data flow.
      let data = [5u8, 6, 7, 8];
