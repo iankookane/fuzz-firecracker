@@ -100,12 +100,53 @@ fuzz_target!(|data: &[u8]| {
 
             let mut total = 0;
             let mut temp = avail_desc;
-            while (temp.has_next()) {
-                temp = temp.next_descriptor().unwrap();
-                if (temp.is_write_only()) {
+            // while (temp.has_next()) {
+            //     println!("hasnext: {:?}", temp.has_next());
+            //     temp = temp.next_descriptor().unwrap();
+            //     // println!("hasnext: {:?}", temp);
+            //     if (temp.is_write_only()) {
+            //         total = total+1;
+            //     }
+            // }
+
+            // while (temp.has_next()) {
+            //     println!("hasnext: {:?}", temp.has_next());
+            //     let temp2 = temp.next_descriptor();
+            //     if (!temp2.is_none()) {
+            //         temp = temp2.unwrap();
+            //         if (temp.is_write_only()) {
+            //             total = total+1;
+            //         }
+            //     } else {
+            //         break;
+            //     }
+            //     // println!("hasnext: {:?}", temp);
+                
+            // }
+
+            // SO IT SEEMS LIKE HAS_NEXT RETURNS TRUE SOMETIMES EVEN IF NO NEXT DESCRIPTOR
+            // Because the next descriptor could fail in checked_new
+
+            let mut next_desc = Some(temp);
+            // let mut i=0;
+            while let Some(desc) = next_desc {
+                // i = i+1;
+                if (desc.is_write_only()) {
                     total = total+1;
                 }
+                next_desc = desc.next_descriptor();
             }
+            // THIS SHOWS THAT desc next descriptor doesnt equal queue size by end, related to bug above
+            // all code using has next_errors if next_descriptor returns none though. (So safely errors)
+            // assert_eq!(i,queue_size);
+            
+            // while (temp.has_next()) {
+            //     temp = temp.next_descriptor().ok_or(Error::DescriptorChainTooShort)?;
+            //     println!("hasnext: {:?}", temp.has_next());
+            //     if (temp.is_write_only()) {
+            //         total = total+1;
+            //     }
+            // }
             q.add_used(mem, idx, total);
         }
     });
