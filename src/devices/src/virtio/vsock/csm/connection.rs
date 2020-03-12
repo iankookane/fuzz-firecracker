@@ -264,6 +264,7 @@ where
     /// always `Ok(())`: the packet has been consumed;
     fn send_pkt(&mut self, pkt: &VsockPacket) -> VsockResult<()> {
         // Update the peer credit information.
+        
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
@@ -281,9 +282,10 @@ where
                     );
                     return Ok(());
                 }
-
+                // println!("{:?}", pkt.buf());
                 // Unwrapping here is safe, since we just checked `pkt.buf()` above.
                 let buf_slice = &pkt.buf().unwrap()[..(pkt.len() as usize)];
+                // println!("{:?}", &pkt.buf().unwrap()[..(pkt.len() as usize)]);
                 if let Err(err) = self.send_bytes(buf_slice) {
                     // If we can't write to the host stream, that's an unrecoverable error, so
                     // we'll terminate this connection.

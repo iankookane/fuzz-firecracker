@@ -53,8 +53,8 @@ use super::{Error, Result};
 /// keyed by a `ConnMapKey` object.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ConnMapKey {
-    local_port: u32,
-    peer_port: u32,
+    pub local_port: u32,
+    pub peer_port: u32,
 }
 
 /// A muxer RX queue item.
@@ -67,7 +67,7 @@ pub enum MuxerRx {
 }
 
 /// An epoll listener, registered under the muxer's nested epoll FD.
-enum EpollListener {
+pub enum EpollListener {
     /// The listener is a `MuxerConnection`, identified by `key`, and interested in the events
     /// in `evset`. Since `MuxerConnection` implements `VsockEpollListener`, notifications will
     /// be forwarded to the listener via `VsockEpollListener::notify()`.
@@ -84,7 +84,7 @@ pub struct VsockMuxer {
     /// Guest CID.
     cid: u64,
     /// A hash map used to store the active connections.
-    conn_map: HashMap<ConnMapKey, MuxerConnection>,
+    pub conn_map: HashMap<ConnMapKey, MuxerConnection>,
     /// A hash map used to store epoll event listeners / handlers.
     listener_map: HashMap<RawFd, EpollListener>,
     /// The RX queue. Items in this queue are consumed by `VsockMuxer::recv_pkt()`, and
@@ -189,7 +189,6 @@ impl VsockChannel for VsockMuxer {
             local_port: pkt.dst_port(),
             peer_port: pkt.src_port(),
         };
-
         debug!(
             "vsock: muxer.send[rxq.len={}]: {:?}",
             self.rxq.len(),
@@ -304,6 +303,7 @@ impl VsockMuxer {
     pub fn new(cid: u64, host_sock_path: String) -> Result<Self> {
         // Open/bind on the host Unix socket, so we can accept host-initiated
         // connections.
+        
         let host_sock = UnixListener::bind(&host_sock_path)
             .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
             .map_err(Error::UnixBind)?;
@@ -748,15 +748,17 @@ impl VsockMuxer {
     }
 }
 
-#[cfg(test)]
-mod tests {
+// #[cfg(test)]
+pub mod tests {
     use std::io::{Read, Write};
     use std::ops::Drop;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
 
-    use super::super::super::csm::defs as csm_defs;
-    use super::super::super::tests::TestContext as VsockTestContext;
+    // use super::super::super::csm::defs as csm_defs;
+    use crate::virtio::vsock::csm::defs as csm_defs;
+    use crate::virtio::vsock::tests::TestContext as VsockTestContext;
+    // use super::super::super::tests::TestContext as VsockTestContext;
     use super::*;
 
     use crate::virtio::vsock::device::RXQ_INDEX;
@@ -764,10 +766,10 @@ mod tests {
     const PEER_CID: u64 = 3;
     const PEER_BUF_ALLOC: u32 = 64 * 1024;
 
-    struct MuxerTestContext {
-        _vsock_test_ctx: VsockTestContext,
-        pkt: VsockPacket,
-        muxer: VsockMuxer,
+    pub struct MuxerTestContext {
+        pub _vsock_test_ctx: VsockTestContext,
+        pub pkt: VsockPacket,
+        pub muxer: VsockMuxer,
     }
 
     impl Drop for MuxerTestContext {
@@ -777,7 +779,8 @@ mod tests {
     }
 
     impl MuxerTestContext {
-        fn new(name: &str) -> Self {
+        pub fn new(name: &str) -> Self {
+            // Check comments on VsockTestContext (Test Context in vsock/mod.rs)
             let vsock_test_ctx = VsockTestContext::new();
             let mut handler_ctx = vsock_test_ctx.create_event_handler_context();
             let pkt = VsockPacket::from_rx_virtq_head(
@@ -796,7 +799,7 @@ mod tests {
             }
         }
 
-        fn init_pkt(&mut self, local_port: u32, peer_port: u32, op: u16) -> &mut VsockPacket {
+        pub fn init_pkt(&mut self, local_port: u32, peer_port: u32, op: u16) -> &mut VsockPacket {
             for b in self.pkt.hdr_mut() {
                 *b = 0;
             }
@@ -810,7 +813,7 @@ mod tests {
                 .set_buf_alloc(PEER_BUF_ALLOC)
         }
 
-        fn init_data_pkt(
+        pub fn init_data_pkt(
             &mut self,
             local_port: u32,
             peer_port: u32,
@@ -823,19 +826,19 @@ mod tests {
             &mut self.pkt
         }
 
-        fn send(&mut self) {
+        pub fn send(&mut self) {
             self.muxer.send_pkt(&self.pkt).unwrap();
         }
 
-        fn recv(&mut self) {
+        pub fn recv(&mut self) {
             self.muxer.recv_pkt(&mut self.pkt).unwrap();
         }
 
-        fn notify_muxer(&mut self) {
+        pub fn notify_muxer(&mut self) {
             self.muxer.notify(EventSet::IN);
         }
 
-        fn count_epoll_listeners(&self) -> (usize, usize) {
+        pub fn count_epoll_listeners(&self) -> (usize, usize) {
             let mut local_lsn_count = 0usize;
             let mut conn_lsn_count = 0usize;
             for key in self.muxer.listener_map.values() {
@@ -848,11 +851,11 @@ mod tests {
             (local_lsn_count, conn_lsn_count)
         }
 
-        fn create_local_listener(&self, port: u32) -> LocalListener {
+        pub fn create_local_listener(&self, port: u32) -> LocalListener {
             LocalListener::new(format!("{}_{}", self.muxer.host_sock_path, port))
         }
 
-        fn local_connect(&mut self, peer_port: u32) -> (UnixStream, u32) {
+        pub fn local_connect(&mut self, peer_port: u32) -> (UnixStream, u32) {
             let (init_local_lsn_count, init_conn_lsn_count) = self.count_epoll_listeners();
 
             let mut stream = UnixStream::connect(self.muxer.host_sock_path.clone()).unwrap();
@@ -906,12 +909,12 @@ mod tests {
         }
     }
 
-    struct LocalListener {
+    pub struct LocalListener {
         path: PathBuf,
         sock: UnixListener,
     }
     impl LocalListener {
-        fn new<P: AsRef<Path> + Clone>(path: P) -> Self {
+        pub fn new<P: AsRef<Path> + Clone>(path: P) -> Self {
             let path_buf = path.clone().as_ref().to_path_buf();
             let sock = UnixListener::bind(path).unwrap();
             sock.set_nonblocking(true).unwrap();
@@ -920,7 +923,7 @@ mod tests {
                 sock,
             }
         }
-        fn accept(&mut self) -> UnixStream {
+        pub fn accept(&mut self) -> UnixStream {
             let (stream, _) = self.sock.accept().unwrap();
             stream.set_nonblocking(true).unwrap();
             stream

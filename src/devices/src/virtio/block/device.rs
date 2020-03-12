@@ -90,11 +90,11 @@ pub struct Block {
     config_space: Vec<u8>,
 
     // Transport related fields.
-    queues: Vec<Queue>,
+    pub queues: Vec<Queue>,
     interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    pub(crate) queue_evt: EventFd,
-    mem: GuestMemoryMmap,
+    pub interrupt_evt: EventFd,
+    pub queue_evt: EventFd,
+    pub mem: GuestMemoryMmap,
 
     device_activated: bool,
 

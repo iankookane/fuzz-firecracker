@@ -131,7 +131,6 @@ where
     /// otherwise.
     pub fn process_rx(&mut self) -> bool {
         debug!("vsock: process_rx()");
-
         let mut have_used = false;
 
         while let Some(head) = self.queues[RXQ_INDEX].pop(&self.mem) {

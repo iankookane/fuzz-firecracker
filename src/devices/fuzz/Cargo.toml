@@ -11,9 +11,21 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = { version = "0.3", features = ["arbitrary-derive"] }
+vmm-sys-util = ">=0.2.1"
 
-[dependencies.devices]
-path = ".."
+dumbo = { path = "../../dumbo" }
+logger = { path = "../../logger" }
+vm-memory = { path = "../../vm-memory" }
+polly = { path = "../../polly" }
+utils = { path = "../../utils" }
+net_gen = { path = "../../net_gen" }
+rate_limiter = { path = "../../rate_limiter" }
+virtio_gen = { path = "../../virtio_gen" }
+devices = { path = "../"}
+libc = ">=0.2.39"
+rand = "0.7.0"
+rand_core = "0.5.1"
+bufrng = "=1.0.1"
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -22,3 +34,11 @@ members = ["."]
 [[bin]]
 name = "fuzz_block"
 path = "fuzz_targets/fuzz_block.rs"
+
+[[bin]]
+name = "fuzz_vsock"
+path = "fuzz_targets/fuzz_vsock.rs"
+
+[[bin]]
+name = "fuzz_queue"
+path = "fuzz_targets/fuzz_queue.rs"
