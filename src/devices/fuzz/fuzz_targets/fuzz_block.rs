@@ -126,20 +126,21 @@ fuzz_target!(|data| {
     vq.dtable[1].len.set(data.len() as u32);
     mem.write_slice(&data, data_addr).unwrap();
 
-    check_metric_after_block!(
-        &METRICS.block.write_count,
-        1,
-        invoke_handler_for_queue_event(&mut block)
-    );
-
+    // check_metric_after_block!(
+    //     &METRICS.block.write_count,
+    //     1,
+    //     invoke_handler_for_queue_event(&mut block)
+    // );
+    invoke_handler_for_queue_event(&mut block);
+    
     assert_eq!(vq.used.idx.get(), 1);
     assert_eq!(vq.used.ring[0].get().id, 0);
     assert_eq!(vq.used.ring[0].get().len, 0);
     assert_eq!(mem.read_obj::<u32>(status_addr).unwrap(), VIRTIO_BLK_S_OK);
 
-    let buf = &mut [0u8; 32];
+    let buf = &mut vec![0u8; data.len()];
     mem.read_slice(buf, data_addr).unwrap();
-
+    assert_eq!(&buf[..], data);
     // println!("{:?}", (buf));
     // let _ = devices::virtio::block::build_config_space(data);
 });
