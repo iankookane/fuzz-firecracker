@@ -94,7 +94,7 @@ const HDROFF_FWD_CNT: usize = 40;
 pub struct VsockPacket {
     hdr: *mut u8,
     buf: Option<*mut u8>,
-    buf_size: usize,
+    pub buf_size: usize,
 }
 
 fn get_host_address(
@@ -105,6 +105,7 @@ fn get_host_address(
     mem.do_in_region(guest_addr, size, |mapping, offset| {
         // This is safe; `do_in_region` already checks that offset is in
         // bounds.
+        // println!("{}", size);
         Ok(unsafe { mapping.as_ptr().add(offset) } as *mut u8)
     })
 }

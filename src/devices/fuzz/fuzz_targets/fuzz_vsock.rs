@@ -84,13 +84,13 @@ fuzz_target!(|fuzzer_data: &[u8]| {
      let mut buf = vec![0; data.len()];
      stream.read_exact(buf.as_mut_slice()).unwrap();
      assert_eq!(buf.as_slice(), data);
-     if (data.len() > 4096) {
-        println!("{:?}", data.len());
-     }
+    //  if (data.len() > 4096) {
+    //     println!("{:?}", data.len());
+    //  }
 
-     if (data.len() > 0x10000) {
-        println!("{:?}", data.len());
-     }
+    //  if (data.len() > 0x10000) {
+    //     println!("{:?}", data.len());
+    //  }
 
      // Test host -> guest data flow.
      let data = [5u8, 6, 7, 8];
@@ -106,6 +106,9 @@ fuzz_target!(|fuzzer_data: &[u8]| {
      ctx.recv();
      assert_eq!(ctx.pkt.op(), uapi::VSOCK_OP_RW);
      assert_eq!(ctx.pkt.buf().unwrap()[..data.len()], data);
+    //  let test = vec![ctx.pkt.buf().unwrap(); ctx.pkt.buf_size];
+    //  println!("{:?}", test);
+    //  assert_eq!(ctx.pkt.buf().unwrap()[..data.len()+1], [5u8, 6, 7, 8, 0]);
      assert_eq!(ctx.pkt.src_port(), LOCAL_PORT);
      assert_eq!(ctx.pkt.dst_port(), PEER_PORT);
 

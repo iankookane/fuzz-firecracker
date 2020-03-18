@@ -81,3 +81,52 @@ Minimize test case with:
 ────────────────────────────────────────────────────────────────────────────────
 
 Error: Fuzz target exited with exit code: 77
+
+
+INFO: Seed: 1087255005
+INFO: Loaded 1 modules   (97701 inline 8-bit counters): 97701 [0x55ad0adaea22, 0x55ad0adc67c7), 
+INFO: Loaded 1 PC tables (97701 PCs): 97701 [0x55ad0adc67c8,0x55ad0af44218), 
+/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock: Running 1 inputs 1 time(s) each.
+Running: artifacts/fuzz_vsock/crash-c5f63e36fb9760f1588a96eaf19e017fef15769b
+thread '<unnamed>' panicked at 'index 4108 out of range for slice of length 4096', src/libcore/slice/mod.rs:2739:5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==3189== ERROR: libFuzzer: deadly signal
+    #0 0x55ad09d21bf1  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x44abf1)
+    #1 0x55ad0a70561e  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe2e61e)
+    #2 0x55ad0a709978  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe32978)
+    #3 0x55ad0a709819  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe32819)
+    #4 0x55ad0a7067c3  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe2f7c3)
+    #5 0x7f212a2bf38f  (/lib/x86_64-linux-gnu/libpthread.so.0+0x1138f)
+    #6 0x7f2129d03427  (/lib/x86_64-linux-gnu/libc.so.6+0x35427)
+    #7 0x7f2129d05029  (/lib/x86_64-linux-gnu/libc.so.6+0x37029)
+    #8 0x55ad0a91f2f6  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x10482f6)
+    #9 0x55ad0a907095  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x1030095)
+    #10 0x55ad0a6eb368  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe14368)
+    #11 0x55ad0a90e424  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x1037424)
+    #12 0x55ad0a90df3a  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x1036f3a)
+    #13 0x55ad0a93e8f0  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x10678f0)
+    #14 0x55ad0a9438b5  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x106c8b5)
+    #15 0x55ad0a1f99cb  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x9229cb)
+    #16 0x55ad0a1f512a  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x91e12a)
+    #17 0x55ad0a1bddaf  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x8e6daf)
+    #18 0x55ad09df5d73  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x51ed73)
+    #19 0x55ad09d50a6c  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x479a6c)
+    #20 0x55ad0a6ead62  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe13d62)
+    #21 0x55ad0a731d44  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe5ad44)
+    #22 0x55ad0a920306  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x1049306)
+    #23 0x55ad0a731735  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe5a735)
+    #24 0x55ad0a6ed70c  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe1670c)
+    #25 0x55ad0a6ea6a9  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe136a9)
+    #26 0x55ad0a70b4ae  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe344ae)
+    #27 0x55ad0a6d48ce  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xdfd8ce)
+    #28 0x55ad0a6d8b75  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xe01b75)
+    #29 0x55ad0a6d1e4c  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0xdfae4c)
+    #30 0x7f2129cee82f  (/lib/x86_64-linux-gnu/libc.so.6+0x2082f)
+    #31 0x55ad09ca13f8  (/home/niosu/fuzz-firecracker/build/cargo_target/x86_64-unknown-linux-gnu/debug/fuzz_vsock+0x3ca3f8)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit code: 77

@@ -254,7 +254,7 @@ mod tests {
     impl TestContext {
         pub fn new() -> Self {
             const CID: u64 = 52;
-            const MEM_SIZE: usize = 1024 * 1024 * 128;
+            const MEM_SIZE: usize = 1024 * 1024 * 5;
             // Allocate 128MB
             let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), MEM_SIZE)]).unwrap();
             Self {
@@ -283,14 +283,14 @@ mod tests {
                 VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
                 1,
             );
-            guest_rxvq.dtable[1].set(0x0040_1000, 4096, VIRTQ_DESC_F_WRITE, 0);
+            guest_rxvq.dtable[1].set(0x0040_1000, 0x0009_9010, VIRTQ_DESC_F_WRITE, 0);
 
             guest_rxvq.avail.ring[0].set(0);
             guest_rxvq.avail.idx.set(1);
 
             // Set up one available descriptor in the TX queue.
             guest_txvq.dtable[0].set(0x0050_0000, VSOCK_PKT_HDR_SIZE as u32, VIRTQ_DESC_F_NEXT, 1);
-            guest_txvq.dtable[1].set(0x0050_1000, 4096, 0, 0);
+            guest_txvq.dtable[1].set(0x0050_1000, 0x0099_9010, 0, 0); // TODO: writes past virt mem?
             guest_txvq.avail.ring[0].set(0);
             guest_txvq.avail.idx.set(1);
 
